@@ -17,6 +17,8 @@ public class GameManager : MonoBehaviour
     private ChessPiece lastCheckedKing = null;
     public bool enableCameraSwitch = true;
 
+    private Stack<MoveRecord> moveHistory = new Stack<MoveRecord>();
+
     private void Awake()
     {
         if (Instance == null) Instance = this;
@@ -39,9 +41,7 @@ public class GameManager : MonoBehaviour
 
     public void SelectPiece(ChessPiece piece)
     {
-        if (SocketManager.Instance.isSpectator) return;
-        if (piece.color != SocketManager.Instance.assignedColor) return;
-        if (currentTurn != SocketManager.Instance.assignedColor) return;
+        if (piece.color != currentTurn) return;
 
         if (selectedPiece == piece)
         {
@@ -70,7 +70,7 @@ public class GameManager : MonoBehaviour
         if (selectedPiece == null) return;
 
         // Không phải lượt của người chơi
-        if (currentTurn != SocketManager.Instance.assignedColor) return;
+        // if (currentTurn != SocketManager.Instance.assignedColor) return;
 
         // ✅ Lưu thông tin quân cờ trước khi di chuyển
         int fromRow = selectedPiece.currentRow;
@@ -90,7 +90,16 @@ public class GameManager : MonoBehaviour
         isMoving = true;
 
         // Xử lý bắt quân nếu có
+        // --- BẮT ĐẦU PHẦN THÊM MỚI ĐỂ LƯU LỊCH SỬ ---
         ChessPiece targetPiece = pieceBoard[row, col];
+        bool wasFirstMove = !selectedPiece.hasMoved; 
+        
+        // Tạo một bản ghi và cất vào ngăn kéo (Stack)
+        MoveRecord record = new MoveRecord(selectedPiece, fromRow, fromCol, row, col, wasFirstMove, targetPiece);
+        moveHistory.Push(record);
+        // --- KẾT THÚC PHẦN THÊM MỚI ---
+
+        // Xử lý bắt quân nếu có
         HandleCapture(targetPiece);
 
         // Di chuyển quân
@@ -98,7 +107,7 @@ public class GameManager : MonoBehaviour
         AudioManager.Instance.PlayMoveSound();
 
         // ✅ Gửi nước đi tới server
-        SocketManager.Instance.SendMove($"{fromRow},{fromCol}->{row},{col}");
+        // SocketManager.Instance.SendMove($"{fromRow},{fromCol}->{row},{col}");
 
         // ✅ Log ra console
         Debug.Log($"♟️ {movingColor} {movingType} moved from {fromRow},{fromCol} to {row},{col}");
@@ -505,13 +514,23 @@ public class GameManager : MonoBehaviour
         isMoving = true;
         currentTurn = currentTurn == PieceColor.White ? PieceColor.Black : PieceColor.White;
 
-        if (enableCameraSwitch)
-            //CameraSwitcher.Instance.SwitchTurn(currentTurn);
+        // Bỏ qua việc xoay camera tự động (nếu code cũ có)
+        // if (enableCameraSwitch) ...
 
         yield return new WaitForSeconds(1f);
 
         UpdatePieceColliders();
         isMoving = false;
+
+        // --- GỌI AI DẬY ĐÁNH NẾU LÀ LƯỢT CỦA ĐEN ---
+        if (currentTurn == PieceColor.Black)
+        {
+            ChessAI ai = FindObjectOfType<ChessAI>();
+            if (ai != null)
+            {
+                ai.MakeMove(PieceColor.Black);
+            }
+        }
     }
 
     private void ClearHighlights()
@@ -526,4 +545,52 @@ public class GameManager : MonoBehaviour
     }
 
     public bool IsMoving() => isMoving;
+
+    // HÀM UNDO: Quay lại 1 nước đi
+    public void UndoLastMove()
+    {
+        if (moveHistory.Count == 0 || isMoving) return;
+
+        isMoving = true;
+
+        // 1. Lấy nước đi cuối cùng ra khỏi lịch sử
+        MoveRecord lastMove = moveHistory.Pop();
+
+        // 2. Dời quân cờ vừa đi về lại vị trí cũ
+        ChessPiece piece = lastMove.movedPiece;
+        pieceBoard[lastMove.toRow, lastMove.toCol] = null; // Xóa ở chỗ mới
+        
+        piece.transform.position = BoardManager.Instance.GetWorldPosition(lastMove.fromRow, lastMove.fromCol);
+        piece.currentRow = lastMove.fromRow;
+        piece.currentCol = lastMove.fromCol;
+        pieceBoard[lastMove.fromRow, lastMove.fromCol] = piece; // Đặt lại vào chỗ cũ
+        
+        piece.hasMoved = !lastMove.isFirstMove; // Phục hồi trạng thái hasMoved
+        piece.UpdateOriginalPosition();
+
+        // 3. Phục hồi quân cờ bị ăn (nếu có)
+        if (lastMove.capturedPiece != null)
+        {
+            ChessPiece captured = lastMove.capturedPiece;
+            captured.transform.position = BoardManager.Instance.GetWorldPosition(lastMove.toRow, lastMove.toCol);
+            captured.currentRow = lastMove.toRow;
+            captured.currentCol = lastMove.toCol;
+            pieceBoard[lastMove.toRow, lastMove.toCol] = captured;
+            
+            // Bật lại Collider và đưa ra khỏi danh sách bị bắt
+            captured.SetColliderEnabled(true);
+            captured.gameObject.SetActive(true); // Giả sử CaptureManager dùng SetActive(false)
+            // Lưu ý: Có thể bạn cần gọi hàm trong CaptureManager để xóa nó khỏi UI quân bị chết
+        }
+
+        // 4. Lùi lại lượt đánh (Đổi Trắng -> Đen hoặc Đen -> Trắng)
+        currentTurn = currentTurn == PieceColor.White ? PieceColor.Black : PieceColor.White;
+        UpdatePieceColliders();
+        
+        // 5. Cập nhật lại trạng thái chiếu tướng (Check)
+        NotifyIfCheck();
+
+        isMoving = false;
+        Debug.Log("Đã Undo 1 nước đi!");
+    }
 }

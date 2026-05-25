@@ -105,6 +105,7 @@ public class SocketManager : MonoBehaviour
 
     public void SendMove(string move)
     {
+        return;
         if (!isSpectator && socket.Connected)
         {
             Debug.Log($"📤 Sending move: {move} (Player: {playerName})");
