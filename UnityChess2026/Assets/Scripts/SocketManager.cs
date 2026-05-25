@@ -31,6 +31,7 @@ public class SocketManager : MonoBehaviour
 
     private void Start()
     {
+        return;
         joinButton.onClick.AddListener(JoinServer);
     }
 
