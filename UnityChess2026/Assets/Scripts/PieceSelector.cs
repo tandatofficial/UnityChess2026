@@ -1,4 +1,5 @@
 ﻿using UnityEngine;
+using UnityEngine.EventSystems;
 
 public class PieceSelector : MonoBehaviour
 {
@@ -11,6 +12,8 @@ public class PieceSelector : MonoBehaviour
 
     private void OnMouseDown()
     {
+        if (EventSystem.current.IsPointerOverGameObject()) return;
+
         GameManager.Instance.SelectPiece(piece);
     }
 }

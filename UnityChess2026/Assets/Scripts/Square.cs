@@ -1,4 +1,5 @@
 ﻿using UnityEngine;
+using UnityEngine.EventSystems;
 
 public class Square : MonoBehaviour
 {
@@ -43,19 +44,23 @@ public class Square : MonoBehaviour
 
     private void OnMouseDown()
     {
+        if (EventSystem.current.IsPointerOverGameObject()) return;
+
         GameManager.Instance.TryMoveTo(row, col);
     }
 
     private void OnMouseEnter()
     {
+        if (EventSystem.current.IsPointerOverGameObject()) return;
+
         if (GameManager.Instance.selectedPiece != null)
             CursorManager.Instance.SetHand();
     }
 
     private void OnMouseExit()
     {
+        if (EventSystem.current.IsPointerOverGameObject()) return;
+
         CursorManager.Instance.SetDefault();
     }
-
-
 }

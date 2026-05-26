@@ -1,9 +1,8 @@
 ﻿using UnityEngine;
+using UnityEngine.EventSystems;
 
 public enum PieceType { Pawn, Rook, Knight, Bishop, Queen, King }
 public enum PieceColor { White, Black }
-
-
 
 [RequireComponent(typeof(Collider))]
 public class ChessPiece : MonoBehaviour
@@ -25,7 +24,6 @@ public class ChessPiece : MonoBehaviour
     private float liftHeight = 0.3f;
     private float moveSpeed = 5f;
 
-
     public bool hasMoved = false;
 
     private void Awake()
@@ -36,7 +34,16 @@ public class ChessPiece : MonoBehaviour
 
     private void Start()
     {
-
+        // Nếu SkinManager tồn tại, lấy màu skin hiện tại đè lên màu mặc định
+        if (SkinManager.Instance != null)
+        {
+            Material skinMat = SkinManager.Instance.GetCurrentPieceMaterial(color);
+            if (skinMat != null) 
+            {
+                normalMaterial = skinMat;
+            }
+        }
+        
         if (pieceRenderer != null && normalMaterial != null)
         {
             pieceRenderer.material = normalMaterial;
@@ -76,7 +83,6 @@ public class ChessPiece : MonoBehaviour
 
     public void ResetHighlight()
     {
-
         if (pieceRenderer != null && normalMaterial != null)
         {
             pieceRenderer.material = normalMaterial;
@@ -85,22 +91,24 @@ public class ChessPiece : MonoBehaviour
         targetPosition = originalPosition;
     }
 
-
     public void SetColliderEnabled(bool enabled)
     {
         if (pieceCollider != null)
             pieceCollider.enabled = enabled;
     }
 
-
     private void OnMouseEnter()
     {
+        if (EventSystem.current.IsPointerOverGameObject()) return;
+
         if (GameManager.Instance.GetValidMoves(this).Count > 0 && color == GameManager.Instance.currentTurn)
             CursorManager.Instance.SetHand();
     }
 
     private void OnMouseExit()
     {
+        if (EventSystem.current.IsPointerOverGameObject()) return;
+
         CursorManager.Instance.SetDefault();
     }
 
