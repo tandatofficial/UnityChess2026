@@ -31,7 +31,7 @@ Transform:
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: -0, z: -0, w: 1}
   m_LocalPosition: {x: -0, y: 0, z: 0}
-  m_LocalScale: {x: 1.25, y: 1.25, z: 1.25}
+  m_LocalScale: {x: 0.175, y: 0.175, z: 0.175}
   m_ConstrainProportionsScale: 0
   m_Children: []
   m_Father: {fileID: 0}
@@ -43,7 +43,7 @@ MeshFilter:
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 8945419093082214486}
-  m_Mesh: {fileID: -2619297747013396988, guid: 51be7ca98ee47cf43947e211fc45b48a, type: 3}
+  m_Mesh: {fileID: -5668922809309840694, guid: fa004fcec8b5ee0498f576c8531bf30e, type: 3}
 --- !u!23 &7557805613954703565
 MeshRenderer:
   m_ObjectHideFlags: 0
@@ -64,10 +64,14 @@ MeshRenderer:
   m_RayTracingAccelStructBuildFlagsOverride: 0
   m_RayTracingAccelStructBuildFlags: 1
   m_SmallMeshCulling: 1
+  m_ForceMeshLod: -1
+  m_MeshLodSelectionBias: 0
   m_RenderingLayerMask: 1
   m_RendererPriority: 0
   m_Materials:
-  - {fileID: 2100000, guid: fdb3ab54392f7604b83ac492939ed438, type: 2}
+  - {fileID: -5901602718213871164, guid: fa004fcec8b5ee0498f576c8531bf30e, type: 3}
+  - {fileID: -6735793009185934161, guid: fa004fcec8b5ee0498f576c8531bf30e, type: 3}
+  - {fileID: -7756771015291502139, guid: 88749383b282e7b49ba6b14c84d1d1f0, type: 3}
   m_StaticBatchInfo:
     firstSubMesh: 0
     subMeshCount: 0
@@ -85,9 +89,11 @@ MeshRenderer:
   m_AutoUVMaxDistance: 0.5
   m_AutoUVMaxAngle: 89
   m_LightmapParameters: {fileID: 0}
+  m_GlobalIlluminationMeshLod: 0
   m_SortingLayerID: 0
   m_SortingLayer: 0
   m_SortingOrder: 0
+  m_MaskInteraction: 0
   m_AdditionalVertexStreams: {fileID: 0}
 --- !u!114 &321130703541427707
 MonoBehaviour:
@@ -105,10 +111,10 @@ MonoBehaviour:
   color: 0
   currentRow: 0
   currentCol: 0
-  handCursorTexture: {fileID: 2800000, guid: 94bef54166cbc1f418a36e94cbc23f4f, type: 3}
   normalMaterial: {fileID: 2100000, guid: fdb3ab54392f7604b83ac492939ed438, type: 2}
   highlightMaterial: {fileID: 2100000, guid: 810c73c72c2a30b47b5b98dec45c9347, type: 2}
   attackHighlightMaterial: {fileID: 2100000, guid: 95815e941dd60b543af96a1610d1109a, type: 2}
+  hasMoved: 0
 --- !u!114 &1854549684173958578
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -142,4 +148,4 @@ MeshCollider:
   serializedVersion: 5
   m_Convex: 0
   m_CookingOptions: 30
-  m_Mesh: {fileID: -2619297747013396988, guid: 51be7ca98ee47cf43947e211fc45b48a, type: 3}
+  m_Mesh: {fileID: -5668922809309840694, guid: fa004fcec8b5ee0498f576c8531bf30e, type: 3}

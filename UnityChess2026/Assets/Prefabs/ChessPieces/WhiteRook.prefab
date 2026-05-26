@@ -64,6 +64,8 @@ MeshRenderer:
   m_RayTracingAccelStructBuildFlagsOverride: 0
   m_RayTracingAccelStructBuildFlags: 1
   m_SmallMeshCulling: 1
+  m_ForceMeshLod: -1
+  m_MeshLodSelectionBias: 0
   m_RenderingLayerMask: 1
   m_RendererPriority: 0
   m_Materials:
@@ -85,9 +87,11 @@ MeshRenderer:
   m_AutoUVMaxDistance: 0.5
   m_AutoUVMaxAngle: 89
   m_LightmapParameters: {fileID: 0}
+  m_GlobalIlluminationMeshLod: 0
   m_SortingLayerID: 0
   m_SortingLayer: 0
   m_SortingOrder: 0
+  m_MaskInteraction: 0
   m_AdditionalVertexStreams: {fileID: 0}
 --- !u!114 &1237836230014246103
 MonoBehaviour:
@@ -105,10 +109,10 @@ MonoBehaviour:
   color: 0
   currentRow: 0
   currentCol: 0
-  handCursorTexture: {fileID: 2800000, guid: 94bef54166cbc1f418a36e94cbc23f4f, type: 3}
   normalMaterial: {fileID: 2100000, guid: fdb3ab54392f7604b83ac492939ed438, type: 2}
   highlightMaterial: {fileID: 2100000, guid: 810c73c72c2a30b47b5b98dec45c9347, type: 2}
   attackHighlightMaterial: {fileID: 2100000, guid: 95815e941dd60b543af96a1610d1109a, type: 2}
+  hasMoved: 0
 --- !u!114 &695979620669660403
 MonoBehaviour:
   m_ObjectHideFlags: 0
