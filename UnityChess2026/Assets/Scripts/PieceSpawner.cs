@@ -70,14 +70,7 @@ public class PieceSpawner : MonoBehaviour
     {
         Vector3 position = BoardManager.Instance.GetWorldPosition(row, col);
 
-        Quaternion rotation = Quaternion.identity;
-
-        if (type == PieceType.Knight || type == PieceType.King)
-        {
-            rotation = (color == PieceColor.White)
-                ? Quaternion.Euler(0, 90f, 0)
-                : Quaternion.Euler(0, -90f, 0);
-        }
+        Quaternion rotation = prefab.transform.rotation;
 
         Transform parent = (color == PieceColor.White) ? whitePieces.transform : blackPieces.transform;
 
