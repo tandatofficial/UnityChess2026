@@ -47,8 +47,8 @@ public class HintManager : MonoBehaviour
         // --- KÍCH HOẠT STOCKFISH ---
         if (StockfishManager.Instance != null)
         {
-            // Cho máy suy nghĩ 1 giây (1000ms). Trả kết quả về qua callback.
-            StockfishManager.Instance.GetBestMove(currentHistory, 1000, (suggestedMove) => 
+            // Cho máy suy nghĩ 3 giây (3000ms). Trả kết quả về qua callback.
+            StockfishManager.Instance.GetBestMove(currentHistory, 3000, (suggestedMove) => 
             {
                 // Lưu lại kết quả vào bộ nhớ tạm
                 cachedHistory = currentHistory;
