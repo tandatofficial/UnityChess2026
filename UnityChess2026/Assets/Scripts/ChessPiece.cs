@@ -99,7 +99,7 @@ public class ChessPiece : MonoBehaviour
 
     private void OnMouseEnter()
     {
-        if (EventSystem.current.IsPointerOverGameObject()) return;
+        if (EventSystem.current!= null && EventSystem.current.IsPointerOverGameObject()) return;
 
         if (GameManager.Instance.GetValidMoves(this).Count > 0 && color == GameManager.Instance.currentTurn)
             CursorManager.Instance.SetHand();
@@ -107,7 +107,7 @@ public class ChessPiece : MonoBehaviour
 
     private void OnMouseExit()
     {
-        if (EventSystem.current.IsPointerOverGameObject()) return;
+        if (EventSystem.current != null && EventSystem.current.IsPointerOverGameObject()) return;
 
         CursorManager.Instance.SetDefault();
     }

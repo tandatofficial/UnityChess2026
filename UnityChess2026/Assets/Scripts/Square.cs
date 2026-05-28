@@ -14,6 +14,11 @@ public class Square : MonoBehaviour
 
     private bool isWhite;
 
+    // --- Quản lý trạng thái màu sắc ---
+    private bool isHighlighted = false;
+    private bool isHinted = false;
+    private Material hintMaterial;
+
     private void Start()
     {
         squareRenderer = GetComponent<Renderer>();
@@ -30,37 +35,50 @@ public class Square : MonoBehaviour
     {
         isWhite = white;
         squareRenderer = GetComponent<Renderer>();
-        squareRenderer.material = isWhite ? whiteMaterial : blackMaterial;
+        RefreshMaterial();
     }
 
     public void SetHighlight(bool on)
     {
-        if (squareRenderer == null || highlightMaterial == null) return;
+        isHighlighted = on;
+        RefreshMaterial();
+    }
 
-        squareRenderer.material = on
-            ? highlightMaterial
-            : (isWhite ? whiteMaterial : blackMaterial);
+    public void SetHint(bool on, Material hMat = null)
+    {
+        isHinted = on;
+        if (hMat != null) hintMaterial = hMat;
+        RefreshMaterial();
+    }
+
+    private void RefreshMaterial()
+    {
+        if (squareRenderer == null) return;
+
+        if (isHighlighted && highlightMaterial != null)
+            squareRenderer.material = highlightMaterial;
+        else if (isHinted && hintMaterial != null)
+            squareRenderer.material = hintMaterial; // Hiển thị màu Hint
+        else
+            squareRenderer.material = isWhite ? whiteMaterial : blackMaterial;
     }
 
     private void OnMouseDown()
     {
         if (EventSystem.current.IsPointerOverGameObject()) return;
-
         GameManager.Instance.TryMoveTo(row, col);
     }
 
     private void OnMouseEnter()
     {
-        if (EventSystem.current.IsPointerOverGameObject()) return;
-
+        if (EventSystem.current != null && EventSystem.current.IsPointerOverGameObject()) return;
         if (GameManager.Instance.selectedPiece != null)
             CursorManager.Instance.SetHand();
     }
 
     private void OnMouseExit()
     {
-        if (EventSystem.current.IsPointerOverGameObject()) return;
-
+        if (EventSystem.current != null && EventSystem.current.IsPointerOverGameObject()) return;
         CursorManager.Instance.SetDefault();
     }
 }

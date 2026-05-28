@@ -3,6 +3,8 @@ public class KnightMoveRule : IMoveRule
 {
     public bool IsValidMove(ChessPiece piece, int targetRow, int targetCol, ChessPiece[,] board)
     {
+        if (piece.currentRow == targetRow && piece.currentCol == targetCol) return false;
+        
         int dr = Mathf.Abs(targetRow - piece.currentRow);
         int dc = Mathf.Abs(targetCol - piece.currentCol);
 

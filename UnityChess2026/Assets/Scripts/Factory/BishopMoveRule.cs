@@ -2,8 +2,12 @@
 
 public class BishopMoveRule : IMoveRule
 {
+    
     public bool IsValidMove(ChessPiece piece, int targetRow, int targetCol, ChessPiece[,] board)
     {
+        if (piece.currentRow == targetRow && piece.currentCol == targetCol) 
+        return false;
+
         int row = piece.currentRow;
         int col = piece.currentCol;
 
