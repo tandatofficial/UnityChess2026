@@ -4,6 +4,8 @@ public class PawnMoveRule : IMoveRule
 {
     public bool IsValidMove(ChessPiece piece, int targetRow, int targetCol, ChessPiece[,] board)
     {
+        if (piece.currentRow == targetRow && piece.currentCol == targetCol) return false;
+        
         int dir = piece.color == PieceColor.White ? 1 : -1;
         int startRow = piece.color == PieceColor.White ? 1 : 6;
 

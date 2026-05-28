@@ -66,6 +66,9 @@ public class GameManager : MonoBehaviour
 
     public void TryMoveTo(int row, int col)
     {
+        // Xóa dấu vết Gợi ý ngay khi người chơi vừa đi cờ
+        if (HintManager.Instance != null) HintManager.Instance.ClearHint();
+
         // Không có quân cờ được chọn
         if (selectedPiece == null) return;
 
@@ -548,16 +551,62 @@ public class GameManager : MonoBehaviour
     public bool IsMoving() => isMoving;
 
     // HÀM UNDO: Quay lại 1 nước đi
+    // --- HÀM UNDO: SỬA ĐỂ LÙI 2 BƯỚC LIÊN TIẾP ---
     public void UndoLastMove()
     {
-        if (moveHistory.Count == 0 || isMoving) return;
+        // CHỐT CHẶN 1: Nếu cờ đang bay thì không cho Undo để tránh loạn mảng
+        if (isMoving) 
+        {
+            Debug.LogWarning("Không thể Undo: Quân cờ đang di chuyển!");
+            return;
+        }
 
-        isMoving = true;
+        // CHỐT CHẶN 2: Chỉ cho phép Undo khi ĐANG LÀ LƯỢT CỦA NGƯỜI CHƠI (White)
+        // Nếu AI (Black) đang nghĩ hoặc đang đi, nút Undo sẽ bị vô hiệu hóa
+        if (currentTurn == PieceColor.Black)
+        {
+            Debug.LogWarning("Không thể Undo: Đang là lượt của máy!");
+            return;
+        }
 
-        // 1. Lấy nước đi cuối cùng ra khỏi lịch sử
+        // Kiểm tra xem lịch sử có đủ 2 nước (1 của mình, 1 của máy) để lùi không
+        if (moveHistory.Count >= 2)
+        {
+            isMoving = true; // Khóa bàn cờ trong lúc lùi
+
+            UndoSingleMove(); // Lùi nước của Máy
+            UndoSingleMove(); // Lùi nước của Người chơi
+
+            // Chuyển lượt về người chơi hiện tại (nếu đang White, lùi 2 bước vẫn là White)
+            // Không đổi currentTurn vì lùi số chẵn lần
+
+            UpdatePieceColliders();
+            NotifyIfCheck();
+
+            // Nếu AI lỡ phong hậu mà mình Undo, AI vẫn còn kẹt màn hình phong hậu, nên ta phải đóng nó lại
+            if (PromotionManager.Instance != null && PromotionManager.Instance.promotionPanel != null)
+            {
+                PromotionManager.Instance.promotionPanel.SetActive(false);
+            }
+
+            // Xóa Hint nếu đang hiển thị
+            if (HintManager.Instance != null) HintManager.Instance.ClearHint();
+
+            isMoving = false; // Mở khóa bàn cờ
+            Debug.Log("Đã Undo thành công 2 nước cờ (Máy và Người)!");
+        }
+        else
+        {
+            Debug.LogWarning("Không đủ lịch sử để Undo 2 nước!");
+        }
+    }
+
+    // Lùi ĐÚNG 1 bước trên bàn cờ (được gọi bởi UndoLastMove)
+    private void UndoSingleMove()
+    {
         MoveRecord lastMove = moveHistory.Pop();
 
-        // 2. Dời quân cờ vừa đi về lại vị trí cũ
+        // 1. Dời quân cờ vừa đi về lại vị trí cũ
         ChessPiece piece = lastMove.movedPiece;
         pieceBoard[lastMove.toRow, lastMove.toCol] = null; // Xóa ở chỗ mới
         
@@ -569,7 +618,17 @@ public class GameManager : MonoBehaviour
         piece.hasMoved = !lastMove.isFirstMove; // Phục hồi trạng thái hasMoved
         piece.UpdateOriginalPosition();
 
-        // 3. Phục hồi quân cờ bị ăn (nếu có)
+        // NẾU NƯỚC ĐI CỦA MÁY LÀ PHONG HẬU -> BIẾN HẬU LẠI THÀNH TỐT
+        if (piece.type != PieceType.Pawn && (lastMove.fromRow == 1 && lastMove.toRow == 0 || lastMove.fromRow == 6 && lastMove.toRow == 7))
+        {
+            // Trong game của bạn, đoạn này cần gọi lệnh biến hình lại thành Pawn.
+            // Nếu bạn sinh quân mới khi phong hậu, bạn sẽ cần Destroy(piece) và Instantiate lại Pawn ở đây.
+            // Tạm thời nếu bạn chỉ đổi model/type:
+            piece.type = PieceType.Pawn; 
+            // (Thêm code đổi hình dạng về Tốt nếu bạn có)
+        }
+
+        // 2. Phục hồi quân cờ bị ăn (nếu có)
         if (lastMove.capturedPiece != null)
         {
             ChessPiece captured = lastMove.capturedPiece;
@@ -578,20 +637,12 @@ public class GameManager : MonoBehaviour
             captured.currentCol = lastMove.toCol;
             pieceBoard[lastMove.toRow, lastMove.toCol] = captured;
             
-            // Bật lại Collider và đưa ra khỏi danh sách bị bắt
             captured.SetColliderEnabled(true);
-            captured.gameObject.SetActive(true); // Giả sử CaptureManager dùng SetActive(false)
-            // Lưu ý: Có thể bạn cần gọi hàm trong CaptureManager để xóa nó khỏi UI quân bị chết
+            captured.gameObject.SetActive(true); 
+            
+            // Xóa quân bị ăn khỏi danh sách hiển thị trên UI
+            if (CaptureManager.Instance != null)
+                CaptureManager.Instance.RemoveLastCapturedPiece(captured);
         }
-
-        // 4. Lùi lại lượt đánh (Đổi Trắng -> Đen hoặc Đen -> Trắng)
-        currentTurn = currentTurn == PieceColor.White ? PieceColor.Black : PieceColor.White;
-        UpdatePieceColliders();
-        
-        // 5. Cập nhật lại trạng thái chiếu tướng (Check)
-        NotifyIfCheck();
-
-        isMoving = false;
-        Debug.Log("Đã Undo 1 nước đi!");
     }
 }

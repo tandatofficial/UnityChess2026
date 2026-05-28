@@ -43,6 +43,24 @@ public class CaptureManager : MonoBehaviour
         piece.Highlight(false);
     }
 
+    // Hàm xóa quân cờ khỏi danh sách "Nghĩa địa" khi Undo ---
+    public void RemoveLastCapturedPiece(ChessPiece piece)
+    {
+        if (piece.color == PieceColor.White)
+        {
+            if (whiteCapturedPieces.Contains(piece))
+            {
+                whiteCapturedPieces.Remove(piece);
+            }
+        }
+        else
+        {
+            if (blackCapturedPieces.Contains(piece))
+            {
+                blackCapturedPieces.Remove(piece);
+            }
+        }
+    }
 
     private void MoveToCapturedAreaSmooth(ChessPiece piece, Transform area, int count)
     {

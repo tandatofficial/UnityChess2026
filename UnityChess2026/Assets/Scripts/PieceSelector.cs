@@ -12,7 +12,7 @@ public class PieceSelector : MonoBehaviour
 
     private void OnMouseDown()
     {
-        if (EventSystem.current.IsPointerOverGameObject()) return;
+        if (EventSystem.current != null && EventSystem.current.IsPointerOverGameObject()) return;
 
         GameManager.Instance.SelectPiece(piece);
     }

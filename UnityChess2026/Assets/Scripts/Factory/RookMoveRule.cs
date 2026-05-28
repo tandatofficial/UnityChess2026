@@ -5,9 +5,15 @@
         int row = piece.currentRow;
         int col = piece.currentCol;
 
+        // Chặn ngay lập tức nếu ô đích trùng với ô đang đứng!
+        if (row == targetRow && col == targetCol) 
+            return false;
+
+        // Kiểm tra xem ô có bị lố ra ngoài bàn cờ không
         if (targetRow < 0 || targetRow >= 8 || targetCol < 0 || targetCol >= 8)
             return false;
 
+        // Luật đi thẳng của Xe
         if (row != targetRow && col != targetCol) return false;
 
         if (row == targetRow)
