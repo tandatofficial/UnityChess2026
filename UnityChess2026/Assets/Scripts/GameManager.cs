@@ -537,7 +537,7 @@ public class GameManager : MonoBehaviour
         // --- GỌI SIÊU TRÍ TUỆ STOCKFISH VỚI 3 MỨC ĐỘ KHÓ ---
         if (currentTurn == PieceColor.Black)
         {
-            string history = GetUCIMoveHistory();
+            string history = GetBoardFEN();
             if (StockfishManager.Instance != null)
             {
                 // Mặc định là 1 giây (Medium)
@@ -674,30 +674,70 @@ public class GameManager : MonoBehaviour
         }
     }
 
-    public string GetUCIMoveHistory()
+    // Dịch bàn cờ hiện tại sang mã FEN chuẩn quốc tế cho Stockfish đọc
+    public string GetBoardFEN()
     {
-        // Chuyển Stack thành List và đảo ngược lại thành đúng thứ tự thời gian từ cũ tới mới
-        var list = new List<MoveRecord>(moveHistory);
-        list.Reverse(); 
-
-        string uci = "";
-        foreach (var record in list)
+        string fen = "";
+        
+        // 1. Quét vị trí quân cờ (từ hàng 8 xuống hàng 1)
+        for (int row = 7; row >= 0; row--)
         {
-            char fromCol = (char)('a' + record.fromCol);
-            int fromRow = record.fromRow + 1;
-            char toCol = (char)('a' + record.toCol);
-            int toRow = record.toRow + 1;
-
-            string move = $"{fromCol}{fromRow}{toCol}{toRow}";
-
-            // Bắt buộc cấu hình phong Hậu tự động cho máy (thêm chữ 'q' ở đuôi)
-            if (record.movedPiece.type == PieceType.Pawn && (record.toRow == 0 || record.toRow == 7))
+            int emptyCount = 0;
+            for (int col = 0; col < 8; col++)
             {
-                move += "q";
+                ChessPiece piece = pieceBoard[row, col];
+                if (piece == null)
+                {
+                    emptyCount++;
+                }
+                else
+                {
+                    if (emptyCount > 0)
+                    {
+                        fen += emptyCount.ToString();
+                        emptyCount = 0;
+                    }
+                    char pChar = GetPieceChar(piece);
+                    fen += pChar;
+                }
             }
-
-            uci += move + " ";
+            if (emptyCount > 0) fen += emptyCount.ToString();
+            if (row > 0) fen += "/";
         }
-        return uci.Trim();
+
+        // 2. Lượt đi (w = Trắng, b = Đen)
+        fen += (currentTurn == PieceColor.White) ? " w " : " b ";
+
+        // 3. Quyền nhập thành (Để đơn giản cho AI phụ, ta tạm bỏ qua quyền nhập thành, set là "-")
+        // Nếu bạn muốn AI nhập thành được, phần này cần code khá dài để track Vua và Xe di chuyển chưa.
+        // Tạm thời set "-" để sửa lỗi Vua đi lòng vòng trước đã.
+        fen += "- ";
+
+        // 4. Bắt tốt qua đường (En Passant) - Tạm bỏ qua
+        fen += "- ";
+
+        // 5. Số nước đi không ăn quân/không đẩy tốt (Halfmove clock) - Mặc định 0
+        fen += "0 ";
+
+        // 6. Số lượt đi (Fullmove number) - Mặc định 1
+        fen += "1";
+
+        return fen;
+    }
+
+    // Hàm phụ trợ dịch Quân cờ sang Chữ cái (Trắng = In hoa, Đen = In thường)
+    private char GetPieceChar(ChessPiece piece)
+    {
+        char c = 'p';
+        switch (piece.type)
+        {
+            case PieceType.King: c = 'k'; break;
+            case PieceType.Queen: c = 'q'; break;
+            case PieceType.Rook: c = 'r'; break;
+            case PieceType.Bishop: c = 'b'; break;
+            case PieceType.Knight: c = 'n'; break;
+            case PieceType.Pawn: c = 'p'; break;
+        }
+        return (piece.color == PieceColor.White) ? char.ToUpper(c) : c;
     }
 }

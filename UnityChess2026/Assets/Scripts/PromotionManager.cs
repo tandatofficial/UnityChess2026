@@ -50,7 +50,18 @@ public class PromotionManager : MonoBehaviour
     public void StartPromotion(ChessPiece pawn)
     {
         promotingPawn = pawn;
-        promotionPanel.SetActive(true);
+
+        // KIỂM TRA MÀU QUÂN CỜ
+        if (pawn.color == PieceColor.Black) 
+        {
+            // Nếu là quân Đen (AI), tự động phong Hậu ở chế độ chạy ngầm
+            PromoteTo(PieceType.Queen);
+        }
+        else
+        {
+            // Nếu là quân Trắng (Người chơi), bật menu lên cho bạn tự chọn
+            promotionPanel.SetActive(true);
+        }
     }
 
     public void PromoteTo(PieceType newType)

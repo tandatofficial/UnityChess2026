@@ -71,7 +71,7 @@ public class StockfishManager : MonoBehaviour
 
         UnityEngine.Debug.Log($"🧠 AI bắt đầu suy nghĩ trong {thinkTimeMs}ms...");
         
-        SendCommand($"position startpos moves {moveHistoryStr}");
+        SendCommand($"position fen {moveHistoryStr}");
         SendCommand($"go movetime {thinkTimeMs}");
     }
 

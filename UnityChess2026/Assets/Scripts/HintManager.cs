@@ -31,7 +31,8 @@ public class HintManager : MonoBehaviour
         ClearHint();
         
         // Lấy lịch sử ván cờ hiện tại
-        string currentHistory = GameManager.Instance.GetUCIMoveHistory();
+        string currentHistory = GameManager.Instance.GetBoardFEN();
+        Debug.Log($"🔍 [HINT DEBUG] Chuỗi gửi cho Stockfish: '{currentHistory}'");
 
         // --- BƯỚC KIỂM TRA BỘ NHỚ TẠM ---
         // Nếu lịch sử không đổi (chưa ai đi thêm nước nào), dùng luôn Hint đã tính
@@ -88,7 +89,6 @@ public class HintManager : MonoBehaviour
         StartCoroutine(AutoClearHint());
     }
 
-    // --- PHẦN DƯỚI NÀY GIỮ NGUYÊN CODE CŨ CỦA BẠN VÌ NÓ ĐANG CHẠY RẤT TỐT ---
     private void ShowHintOnSquare(int row, int col)
     {
         GameObject squareObj = BoardManager.Instance.squares[row, col];
