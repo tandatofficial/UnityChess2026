@@ -716,11 +716,13 @@ public class GameManager : MonoBehaviour
         // 4. Bắt tốt qua đường (En Passant) - Tạm bỏ qua
         fen += "- ";
 
-        // 5. Số nước đi không ăn quân/không đẩy tốt (Halfmove clock) - Mặc định 0
-        fen += "0 ";
+        // 5. Số nước đi kể từ lần cuối ăn quân hoặc đẩy Tốt (Halfmove clock)
+        int halfMoves = moveHistory.Count;
+        fen += halfMoves.ToString() + " ";
 
-        // 6. Số lượt đi (Fullmove number) - Mặc định 1
-        fen += "1";
+        // 6. Số vòng lượt đi (Fullmove number - cứ mỗi lượt Trắng + Đen tính là 1 vòng)
+        int fullMoves = (moveHistory.Count / 2) + 1;
+        fen += fullMoves.ToString();
 
         return fen;
     }
