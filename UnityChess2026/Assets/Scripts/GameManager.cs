@@ -170,6 +170,12 @@ public class GameManager : MonoBehaviour
         if (piece == null) return;
 
         selectedPiece = piece;
+
+        ChessPiece targetPiece = pieceBoard[toRow, toCol];
+        bool wasFirstMove = !piece.hasMoved; 
+        MoveRecord record = new MoveRecord(piece, fromRow, fromCol, toRow, toCol, wasFirstMove, targetPiece);
+        moveHistory.Push(record);
+
         HandleCapture(pieceBoard[toRow, toCol]);
         MovePiece(piece, toRow, toCol);
         AudioManager.Instance.PlayMoveSound();
@@ -253,6 +259,11 @@ public class GameManager : MonoBehaviour
             for (int col = 0; col < 8; col++)
             {
                 if (row == piece.currentRow && col == piece.currentCol) continue;
+
+                // Nếu ô đích có chứa quân cờ và quân đó là Vua -> Bỏ qua, không coi là nước đi hợp lệ
+                ChessPiece targetPiece = pieceBoard[row, col];
+                if (targetPiece != null && targetPiece.type == PieceType.King) continue;
+
                 if (!rule.IsValidMove(piece, row, col, pieceBoard)) continue;
 
                 if (SimulateMoveSafe(piece, row, col))
@@ -518,21 +529,38 @@ public class GameManager : MonoBehaviour
         isMoving = true;
         currentTurn = currentTurn == PieceColor.White ? PieceColor.Black : PieceColor.White;
 
-        // Bỏ qua việc xoay camera tự động (nếu code cũ có)
-        // if (enableCameraSwitch) ...
-
         yield return new WaitForSeconds(1f);
 
         UpdatePieceColliders();
         isMoving = false;
 
-        // --- GỌI AI DẬY ĐÁNH NẾU LÀ LƯỢT CỦA ĐEN ---
+        // --- GỌI SIÊU TRÍ TUỆ STOCKFISH VỚI 3 MỨC ĐỘ KHÓ ---
         if (currentTurn == PieceColor.Black)
         {
-            ChessAI ai = FindObjectOfType<ChessAI>();
-            if (ai != null)
+            string history = GetUCIMoveHistory();
+            if (StockfishManager.Instance != null)
             {
-                ai.MakeMove(PieceColor.Black);
+                // Mặc định là 1 giây (Medium)
+                int thinkTimeMs = 1000; 
+
+                // Lấy độ khó người chơi đã chọn từ Menu (mặc định là 2 - Medium nếu chưa chọn)
+                int difficulty = PlayerPrefs.GetInt("Difficulty", 2); 
+
+                switch (difficulty)
+                {
+                    case 1: // DỄ (Easy)
+                        thinkTimeMs = 50;  // Suy nghĩ cực nhanh (50ms) -> Dễ bị hớ hênh, đi sai.
+                        break;
+                    case 2: // THƯỜNG (Medium)
+                        thinkTimeMs = 1000; // Suy nghĩ 1 giây -> Đánh chắc tay, ngang người chơi giỏi.
+                        break;
+                    case 3: // KHÓ (Hard)
+                        thinkTimeMs = 3000; // Suy nghĩ 3 giây -> Tính toán sâu xa, đánh như Kiện tướng!
+                        break;
+                }
+
+                Debug.Log($"AI Đang suy nghĩ ở mức: {difficulty} (Thời gian: {thinkTimeMs}ms)");
+                StockfishManager.Instance.GetBestMove(history, thinkTimeMs); 
             }
         }
     }
@@ -644,5 +672,32 @@ public class GameManager : MonoBehaviour
             if (CaptureManager.Instance != null)
                 CaptureManager.Instance.RemoveLastCapturedPiece(captured);
         }
+    }
+
+    public string GetUCIMoveHistory()
+    {
+        // Chuyển Stack thành List và đảo ngược lại thành đúng thứ tự thời gian từ cũ tới mới
+        var list = new List<MoveRecord>(moveHistory);
+        list.Reverse(); 
+
+        string uci = "";
+        foreach (var record in list)
+        {
+            char fromCol = (char)('a' + record.fromCol);
+            int fromRow = record.fromRow + 1;
+            char toCol = (char)('a' + record.toCol);
+            int toRow = record.toRow + 1;
+
+            string move = $"{fromCol}{fromRow}{toCol}{toRow}";
+
+            // Bắt buộc cấu hình phong Hậu tự động cho máy (thêm chữ 'q' ở đuôi)
+            if (record.movedPiece.type == PieceType.Pawn && (record.toRow == 0 || record.toRow == 7))
+            {
+                move += "q";
+            }
+
+            uci += move + " ";
+        }
+        return uci.Trim();
     }
 }
