@@ -217,6 +217,7 @@ public class GameManager : MonoBehaviour
 
     public void EndDraw(string reason)
     {
+        Debug.Log("Game ended in a draw! Reason: " + reason);
         isMoving = false;
         Time.timeScale = 0f;
 
