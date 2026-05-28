@@ -8,8 +8,9 @@ public class HintManager : MonoBehaviour
     public Material hintMaterial;
     private List<Square> hintedSquares = new List<Square>();
     
-    // MỚI THÊM: Bộ nhớ tạm để lưu Hint của lượt hiện tại
-    private System.Tuple<ChessPiece, Vector2Int> cachedHint = null;
+    // BỘ NHỚ TẠM MỚI: Lưu lịch sử bàn cờ và nước cờ gợi ý
+    private string cachedHistory = "";
+    private string cachedMove = "";
 
     private void Awake()
     {
@@ -17,139 +18,77 @@ public class HintManager : MonoBehaviour
         else Destroy(gameObject);
     }
 
+    // Hàm này đã được nối sẵn với nút Hint của bạn
     public void GiveHint()
     {
-        if (GameManager.Instance.IsMoving()) return;
+        // Chặn không cho bấm Hint khi đang đi cờ hoặc đang là lượt của máy (Black)
+        if (GameManager.Instance.IsMoving() || GameManager.Instance.currentTurn == PieceColor.Black) 
+        {
+            Debug.LogWarning("Chưa tới lượt bạn hoặc cờ đang bay, không thể xem gợi ý!");
+            return;
+        }
 
         ClearHint();
-
-        PieceColor myColor = GameManager.Instance.currentTurn;
+        
+        // Lấy lịch sử ván cờ hiện tại
+        string currentHistory = GameManager.Instance.GetUCIMoveHistory();
 
         // --- BƯỚC KIỂM TRA BỘ NHỚ TẠM ---
-        // Nếu đã có Hint trong bộ nhớ, kiểm tra xem nó còn dùng được cho lượt này không
-        if (cachedHint != null && cachedHint.Item1 != null)
+        // Nếu lịch sử không đổi (chưa ai đi thêm nước nào), dùng luôn Hint đã tính
+        if (currentHistory == cachedHistory && !string.IsNullOrEmpty(cachedMove))
         {
-            // Điều kiện dùng lại Hint cũ:
-            // 1. Vẫn là lượt của màu đó
-            // 2. Quân cờ gợi ý vẫn đang đứng yên ở vị trí cũ trên bàn cờ
-            // 3. Nước đi gợi ý đó vẫn là một nước đi hợp lệ
-            if (cachedHint.Item1.color == myColor &&
-                GameManager.Instance.pieceBoard[cachedHint.Item1.currentRow, cachedHint.Item1.currentCol] == cachedHint.Item1 &&
-                GameManager.Instance.GetValidMoves(cachedHint.Item1).Contains(cachedHint.Item2))
+            Debug.Log("💡 Lấy gợi ý từ bộ nhớ tạm...");
+            ShowHintOnBoard(cachedMove);
+            return;
+        }
+
+        Debug.Log("💡 Đang nhờ siêu trí tuệ Stockfish tính toán...");
+        
+        // --- KÍCH HOẠT STOCKFISH ---
+        if (StockfishManager.Instance != null)
+        {
+            // Cho máy suy nghĩ 1 giây (1000ms). Trả kết quả về qua callback.
+            StockfishManager.Instance.GetBestMove(currentHistory, 1000, (suggestedMove) => 
             {
-                ShowHintOnSquare(cachedHint.Item1.currentRow, cachedHint.Item1.currentCol);
-                ShowHintOnSquare(cachedHint.Item2.x, cachedHint.Item2.y);
-                StartCoroutine(AutoClearHint());
-                return; 
-            }
-        }
-
-        // --- NẾU HINT CŨ ĐÃ HẾT HẠN (qua lượt hoặc bị ăn), TÍNH HINT MỚI ---
-        List<System.Tuple<ChessPiece, Vector2Int>> allValidMoves = new();
-
-        foreach (ChessPiece piece in GameManager.Instance.pieceBoard)
-        {
-            if (piece != null && piece.color == myColor)
-            {
-                List<Vector2Int> moves = GameManager.Instance.GetValidMoves(piece);
-                foreach (Vector2Int move in moves)
-                {
-                    allValidMoves.Add(new System.Tuple<ChessPiece, Vector2Int>(piece, move));
-                }
-            }
-        }
-
-        if (allValidMoves.Count == 0) return;
-
-        System.Tuple<ChessPiece, Vector2Int> bestMove = null;
-        int highestScore = int.MinValue;
-
-        foreach (var move in allValidMoves)
-        {
-            int score = EvaluateMove(move.Item1, move.Item2, myColor);
-            
-            // Xáo trộn nhẹ để đa dạng nước đi cho các ván KHÁC NHAU
-            if (score > highestScore || (score == highestScore && Random.value > 0.5f))
-            {
-                highestScore = score;
-                bestMove = move;
-            }
-        }
-
-        // --- LƯU LẠI VÀO BỘ NHỚ TẠM ---
-        if (bestMove != null)
-        {
-            cachedHint = bestMove; // Lưu lại để lần sau bấm nút đỡ phải tính
-            
-            ShowHintOnSquare(bestMove.Item1.currentRow, bestMove.Item1.currentCol);
-            ShowHintOnSquare(bestMove.Item2.x, bestMove.Item2.y);
-            StartCoroutine(AutoClearHint());
-        }
-    }
-
-    // THUẬT TOÁN CHẤM ĐIỂM
-    private int EvaluateMove(ChessPiece piece, Vector2Int targetMove, PieceColor myColor)
-    {
-        int score = 0;
-        int pieceValue = GetPieceValue(piece.type);
-
-        ChessPiece targetPiece = GameManager.Instance.pieceBoard[targetMove.x, targetMove.y];
-        if (targetPiece != null)
-        {
-            score += GetPieceValue(targetPiece.type) * 10; 
-        }
-
-        bool isTargetUnsafe = GameManager.Instance.IsSquareUnderAttack(targetMove.x, targetMove.y, myColor);
-        if (isTargetUnsafe)
-        {
-            score -= pieceValue * 15; 
+                // Lưu lại kết quả vào bộ nhớ tạm
+                cachedHistory = currentHistory;
+                cachedMove = suggestedMove;
+                
+                ShowHintOnBoard(suggestedMove);
+            });
         }
         else
         {
-            score += 5; 
+            Debug.LogError("🚨 Không tìm thấy StockfishManager trong cảnh!");
         }
-
-        bool isCurrentlyAttacked = GameManager.Instance.IsSquareUnderAttack(piece.currentRow, piece.currentCol, myColor);
-        if (isCurrentlyAttacked)
-        {
-            if (!isTargetUnsafe) score += pieceValue * 12; 
-        }
-
-        if (targetMove.x >= 2 && targetMove.x <= 5 && targetMove.y >= 2 && targetMove.y <= 5)
-        {
-            score += 3;
-        }
-
-        if (piece.type == PieceType.Pawn)
-        {
-            int advanceDir = myColor == PieceColor.White ? 1 : -1;
-            
-            if ((targetMove.x - piece.currentRow) == advanceDir || (targetMove.x - piece.currentRow) == advanceDir * 2) 
-            {
-                score += 4; 
-            }
-
-            int distanceToPromotion = myColor == PieceColor.White ? 7 - targetMove.x : targetMove.x;
-            score += (10 - distanceToPromotion); 
-        }
-
-        return score;
     }
 
-    private int GetPieceValue(PieceType type)
+    // Hàm nhận mã UCI (vd: e2e4) và vẽ lên bàn cờ
+    private void ShowHintOnBoard(string move)
     {
-        switch (type)
+        if (move == "(none)" || string.IsNullOrEmpty(move)) return;
+
+        // Dịch mã UCI sang tọa độ mảng
+        int fromCol = move[0] - 'a';
+        int fromRow = move[1] - '1';
+        int toCol = move[2] - 'a';
+        int toRow = move[3] - '1';
+
+        ChessPiece pieceToMove = GameManager.Instance.pieceBoard[fromRow, fromCol];
+        if (pieceToMove != null)
         {
-            case PieceType.Queen: return 9;
-            case PieceType.Rook: return 5;
-            case PieceType.Bishop: return 3;
-            case PieceType.Knight: return 3;
-            case PieceType.Pawn: return 1;
-            case PieceType.King: return 100; 
-            default: return 0;
+            Debug.Log($"💡 Gợi ý: Hãy cầm quân {pieceToMove.type} đi tới ô ({toRow},{toCol})");
         }
+
+        // Bật sáng 2 ô: Ô quân cờ đang đứng và ô đích cần đến
+        ShowHintOnSquare(fromRow, fromCol);
+        ShowHintOnSquare(toRow, toCol);
+
+        // Tự tắt sau 2.5 giây
+        StartCoroutine(AutoClearHint());
     }
 
+    // --- PHẦN DƯỚI NÀY GIỮ NGUYÊN CODE CŨ CỦA BẠN VÌ NÓ ĐANG CHẠY RẤT TỐT ---
     private void ShowHintOnSquare(int row, int col)
     {
         GameObject squareObj = BoardManager.Instance.squares[row, col];
@@ -158,14 +97,12 @@ public class HintManager : MonoBehaviour
         {
             Renderer squareRenderer = square.GetComponent<Renderer>();
             
-            // Nếu bạn đã gán Material màu Hint riêng, nó sẽ ép ô cờ đổi sang màu đó
             if (squareRenderer != null && hintMaterial != null)
             {
                 squareRenderer.material = hintMaterial;
             }
             else
             {
-                // Nếu quên chưa gán, nó sẽ dùng lại màu mặc định của ô cờ
                 square.SetHighlight(true); 
             }
             
@@ -179,7 +116,6 @@ public class HintManager : MonoBehaviour
         {
             if (sq != null)
             {
-                // Ép ô cờ tự tắt trạng thái Highlight để quay về màu Gỗ/Concrete chuẩn theo Skin đang dùng
                 sq.SetHighlight(false);
             }
         }
