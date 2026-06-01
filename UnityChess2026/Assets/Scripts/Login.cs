@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
-using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
 using UnityEngine;
@@ -9,20 +8,14 @@ using TMPro;
 using UnityEngine.SceneManagement;
 using UnityEngine.EventSystems;
 using UnityEngine.UI;
+using UnityEngine.Networking;
+using System.Collections;
 
 [Serializable]
 public class Account
 {
     public string Username;
     public string Email;
-    public string PasswordHash;
-    public string Salt;
-}
-
-[Serializable]
-public class AccountList
-{
-    public List<Account> Accounts = new List<Account>();
 }
 
 public class AccountManager
@@ -30,212 +23,12 @@ public class AccountManager
     private static AccountManager _instance;
     public static AccountManager Instance => _instance ?? (_instance = new AccountManager());
 
-    private readonly string _filePath;
-    private AccountList _accounts;
-
-    public Account CurrentAccount { get; private set; }
+    public Account CurrentAccount { get; set; }
     public bool IsLoggedIn => CurrentAccount != null;
-
-    private AccountManager()
-    {
-        _filePath = Path.Combine(Application.persistentDataPath, "accounts.json");
-        Load();
-    }
-
-    private void Load()
-    {
-        if (File.Exists(_filePath))
-        {
-            string json = File.ReadAllText(_filePath);
-            _accounts = JsonUtility.FromJson<AccountList>(json) ?? new AccountList();
-        }
-        else
-        {
-            _accounts = new AccountList();
-            Save();
-        }
-    }
-
-    private void Save()
-    {
-        string json = JsonUtility.ToJson(_accounts, true);
-        File.WriteAllText(_filePath, json);
-    }
-
-    public bool Register(string username, string email, string password, out string error)
-    {
-        error = null;
-
-        if (string.IsNullOrWhiteSpace(username) && string.IsNullOrWhiteSpace(email))
-        {
-            error = "Provide a username or email.";
-            return false;
-        }
-
-        if (!string.IsNullOrWhiteSpace(email) && !ValidateEmail(email))
-        {
-            error = "Invalid email format.";
-            return false;
-        }
-
-        if (!string.IsNullOrWhiteSpace(username) && !ValidateUsername(username))
-        {
-            error = "Username must be 3-20 characters, letters, numbers, underscore or dash.";
-            return false;
-        }
-
-        if (!ValidatePassword(password, out string pwError))
-        {
-            error = pwError;
-            return false;
-        }
-
-        if (!string.IsNullOrWhiteSpace(email) &&
-            _accounts.Accounts.Exists(a => string.Equals(a.Email, email, StringComparison.OrdinalIgnoreCase)))
-        {
-            error = "Email is already registered.";
-            return false;
-        }
-
-        if (!string.IsNullOrWhiteSpace(username) &&
-            _accounts.Accounts.Exists(a => string.Equals(a.Username, username, StringComparison.OrdinalIgnoreCase)))
-        {
-            error = "Username is already taken.";
-            return false;
-        }
-
-        byte[] salt = GenerateSalt(16);
-        byte[] hash = HashPassword(password, salt);
-
-        Account account = new Account
-        {
-            Username = username,
-            Email = email,
-            PasswordHash = ToHex(hash),
-            Salt = ToHex(salt)
-        };
-
-        _accounts.Accounts.Add(account);
-        Save();
-
-        return true;
-    }
-
-    public bool Login(string usernameOrEmail, string password, out string error)
-    {
-        error = null;
-
-        if (string.IsNullOrWhiteSpace(usernameOrEmail) || string.IsNullOrWhiteSpace(password))
-        {
-            error = "Missing credentials.";
-            return false;
-        }
-
-        Account found = _accounts.Accounts.Find(a =>
-            string.Equals(a.Email, usernameOrEmail, StringComparison.OrdinalIgnoreCase) ||
-            string.Equals(a.Username, usernameOrEmail, StringComparison.OrdinalIgnoreCase));
-
-        if (found == null)
-        {
-            error = "Account not found.";
-            return false;
-        }
-
-        byte[] salt = FromHex(found.Salt);
-        byte[] hash = HashPassword(password, salt);
-
-        if (!string.Equals(ToHex(hash), found.PasswordHash, StringComparison.OrdinalIgnoreCase))
-        {
-            error = "Invalid password.";
-            return false;
-        }
-
-        CurrentAccount = found;
-        return true;
-    }
 
     public void Logout()
     {
         CurrentAccount = null;
-    }
-
-    private static bool ValidateEmail(string email)
-    {
-        return Regex.IsMatch(email, @"^[^@\s]+@[^@\s]+\.[^@\s]+$", RegexOptions.IgnoreCase);
-    }
-
-    private static bool ValidateUsername(string username)
-    {
-        return Regex.IsMatch(username, "^[a-zA-Z0-9_-]{3,20}$");
-    }
-
-    private static bool ValidatePassword(string password, out string error)
-    {
-        error = null;
-
-        if (string.IsNullOrEmpty(password) || password.Length < 8)
-        {
-            error = "Password must be at least 8 characters.";
-            return false;
-        }
-
-        if (!Regex.IsMatch(password, "[0-9]"))
-        {
-            error = "Password must contain at least one digit.";
-            return false;
-        }
-
-        if (!Regex.IsMatch(password, "[A-Za-z]"))
-        {
-            error = "Password must contain at least one letter.";
-            return false;
-        }
-
-        return true;
-    }
-
-    private static byte[] GenerateSalt(int size)
-    {
-        byte[] salt = new byte[size];
-
-        using (var rng = new RNGCryptoServiceProvider())
-        {
-            rng.GetBytes(salt);
-        }
-
-        return salt;
-    }
-
-    private static byte[] HashPassword(string password, byte[] salt)
-    {
-        using (var deriveBytes = new Rfc2898DeriveBytes(password, salt, 10000, HashAlgorithmName.SHA256))
-        {
-            return deriveBytes.GetBytes(32);
-        }
-    }
-
-    private static string ToHex(byte[] bytes)
-    {
-        StringBuilder sb = new StringBuilder(bytes.Length * 2);
-
-        foreach (byte b in bytes)
-        {
-            sb.Append(b.ToString("x2"));
-        }
-
-        return sb.ToString();
-    }
-
-    private static byte[] FromHex(string hex)
-    {
-        byte[] bytes = new byte[hex.Length / 2];
-
-        for (int i = 0; i < bytes.Length; i++)
-        {
-            bytes[i] = Convert.ToByte(hex.Substring(i * 2, 2), 16);
-        }
-
-        return bytes;
     }
 }
 
@@ -264,6 +57,10 @@ public class Login : MonoBehaviour
     public TMP_Text feedbackText;
     public TMP_Text currentUserText;
 
+    private GameObject verificationPanel;
+    private TMP_InputField verificationCodeInput;
+    private string pendingVerificationEmail;
+
     private void Awake()
     {
         if (EventSystem.current != null)
@@ -275,6 +72,7 @@ public class Login : MonoBehaviour
 
     private void Start()
     {
+        CreateVerificationPanel();
         ShowStartPanel();
         UpdateCurrentUserUI();
     }
@@ -324,18 +122,7 @@ public class Login : MonoBehaviour
         string id = loginUsernameOrEmail ? loginUsernameOrEmail.text.Trim() : "";
         string pw = loginPassword ? loginPassword.text : "";
 
-        if (AccountManager.Instance.Login(id, pw, out string error))
-        {
-            PlayerPrefs.SetString("loggedInUser", id);
-            PlayerPrefs.Save();
-
-            SetFeedback("Login successful", true);
-            SceneManager.LoadScene(mainMenuSceneName);
-        }
-        else
-        {
-            SetFeedback(error ?? "Login failed", false);
-        }
+        StartCoroutine(LoginCoroutine(id, pw));
     }
 
     public void OnRegisterButton()
@@ -351,20 +138,252 @@ public class Login : MonoBehaviour
             return;
         }
 
-        if (AccountManager.Instance.Register(username, email, pw, out string error))
+        StartCoroutine(RegisterCoroutine(username, email, pw));
+    }
+
+    public void OnVerifyButton()
+    {
+        string code = verificationCodeInput ? verificationCodeInput.text.Trim() : "";
+        StartCoroutine(VerifyCoroutine(pendingVerificationEmail, code));
+    }
+
+    private void CreateVerificationPanel()
+    {
+        if (loginPanel == null) return;
+
+        // Clone loginPanel
+        verificationPanel = Instantiate(loginPanel, loginPanel.transform.parent);
+        verificationPanel.name = "VerificationPanel";
+        verificationPanel.SetActive(false);
+
+        // Find input fields
+        TMP_InputField[] inputs = verificationPanel.GetComponentsInChildren<TMP_InputField>(true);
+        if (inputs.Length >= 2)
         {
-            SetFeedback("Registration successful. You can now log in.", true);
+            verificationCodeInput = inputs[0];
+            verificationCodeInput.name = "Input_VerificationCode";
+            verificationCodeInput.text = "";
 
-            if (regUsername) regUsername.text = "";
-            if (regEmail) regEmail.text = "";
-            if (regPassword) regPassword.text = "";
-            if (regConfirmPassword) regConfirmPassword.text = "";
+            // Set Placeholder text
+            var placeholder = verificationCodeInput.placeholder as TMP_Text;
+            if (placeholder != null) placeholder.text = "Enter 6-digit code...";
 
-            ShowLoginPanel();
+            // Destroy the password field
+            Destroy(inputs[1].gameObject);
         }
-        else
+
+        // Find title text and change to "VERIFY EMAIL"
+        TMP_Text[] texts = verificationPanel.GetComponentsInChildren<TMP_Text>(true);
+        foreach (var t in texts)
         {
-            SetFeedback(error ?? "Registration failed", false);
+            if (t.text == "Login" || t.text == "LOGIN")
+            {
+                t.text = "VERIFY EMAIL";
+            }
+        }
+
+        // Configure buttons
+        Button[] buttons = verificationPanel.GetComponentsInChildren<Button>(true);
+        foreach (var b in buttons)
+        {
+            TMP_Text btnText = b.GetComponentInChildren<TMP_Text>();
+            if (btnText != null && (btnText.text == "Login" || btnText.text == "LOGIN"))
+            {
+                btnText.text = "Verify";
+                b.onClick.RemoveAllListeners();
+                b.onClick.AddListener(OnVerifyButton);
+            }
+            else if (btnText != null && (btnText.text == "Back" || btnText.text == "BACK"))
+            {
+                b.onClick.RemoveAllListeners();
+                b.onClick.AddListener(ShowStartPanel);
+            }
+        }
+    }
+
+    public void ShowVerificationPanel()
+    {
+        if (startPanel) startPanel.SetActive(false);
+        if (loginPanel) loginPanel.SetActive(false);
+        if (registerPanel) registerPanel.SetActive(false);
+        if (verificationPanel) verificationPanel.SetActive(true);
+
+        SetFeedback("", true);
+        BringPanelToFront(verificationPanel);
+        DisableFullScreenBlockersExcept(verificationPanel);
+
+        if (verificationCodeInput != null)
+        {
+            EventSystem.current.SetSelectedGameObject(verificationCodeInput.gameObject);
+            verificationCodeInput.ActivateInputField();
+        }
+    }
+
+    [Serializable]
+    public class RegisterData
+    {
+        public string username;
+        public string email;
+        public string password;
+    }
+
+    [Serializable]
+    public class VerifyData
+    {
+        public string email;
+        public string code;
+    }
+
+    [Serializable]
+    public class LoginData
+    {
+        public string usernameOrEmail;
+        public string password;
+    }
+
+    [Serializable]
+    public class BackendResponse
+    {
+        public string message;
+        public string error;
+        public UserData user;
+    }
+
+    [Serializable]
+    public class UserData
+    {
+        public string username;
+        public string email;
+    }
+
+    private IEnumerator RegisterCoroutine(string username, string email, string password)
+    {
+        SetFeedback("Registering...", true);
+        string url = "http://localhost:11100/api/auth/register";
+
+        RegisterData data = new RegisterData { username = username, email = email, password = password };
+        string json = JsonUtility.ToJson(data);
+
+        using (UnityWebRequest request = new UnityWebRequest(url, "POST"))
+        {
+            byte[] bodyRaw = Encoding.UTF8.GetBytes(json);
+            request.uploadHandler = new UploadHandlerRaw(bodyRaw);
+            request.downloadHandler = new DownloadHandlerBuffer();
+            request.SetRequestHeader("Content-Type", "application/json");
+
+            yield return request.SendWebRequest();
+
+            if (request.result == UnityWebRequest.Result.Success)
+            {
+                pendingVerificationEmail = email;
+                SetFeedback("Registration successful. Check your email for verification code.", true);
+
+                if (regUsername) regUsername.text = "";
+                if (regEmail) regEmail.text = "";
+                if (regPassword) regPassword.text = "";
+                if (regConfirmPassword) regConfirmPassword.text = "";
+
+                ShowVerificationPanel();
+            }
+            else
+            {
+                string errMsg = "Registration failed";
+                try
+                {
+                    BackendResponse res = JsonUtility.FromJson<BackendResponse>(request.downloadHandler.text);
+                    if (res != null && !string.IsNullOrEmpty(res.error)) errMsg = res.error;
+                }
+                catch {}
+                SetFeedback(errMsg, false);
+            }
+        }
+    }
+
+    private IEnumerator VerifyCoroutine(string email, string code)
+    {
+        SetFeedback("Verifying...", true);
+        string url = "http://localhost:11100/api/auth/verify";
+
+        VerifyData data = new VerifyData { email = email, code = code };
+        string json = JsonUtility.ToJson(data);
+
+        using (UnityWebRequest request = new UnityWebRequest(url, "POST"))
+        {
+            byte[] bodyRaw = Encoding.UTF8.GetBytes(json);
+            request.uploadHandler = new UploadHandlerRaw(bodyRaw);
+            request.downloadHandler = new DownloadHandlerBuffer();
+            request.SetRequestHeader("Content-Type", "application/json");
+
+            yield return request.SendWebRequest();
+
+            if (request.result == UnityWebRequest.Result.Success)
+            {
+                SetFeedback("Verification successful! You can now log in.", true);
+                ShowLoginPanel();
+            }
+            else
+            {
+                string errMsg = "Verification failed";
+                try
+                {
+                    BackendResponse res = JsonUtility.FromJson<BackendResponse>(request.downloadHandler.text);
+                    if (res != null && !string.IsNullOrEmpty(res.error)) errMsg = res.error;
+                }
+                catch {}
+                SetFeedback(errMsg, false);
+            }
+        }
+    }
+
+    private IEnumerator LoginCoroutine(string id, string pw)
+    {
+        SetFeedback("Logging in...", true);
+        string url = "http://localhost:11100/api/auth/login";
+
+        LoginData data = new LoginData { usernameOrEmail = id, password = pw };
+        string json = JsonUtility.ToJson(data);
+
+        using (UnityWebRequest request = new UnityWebRequest(url, "POST"))
+        {
+            byte[] bodyRaw = Encoding.UTF8.GetBytes(json);
+            request.uploadHandler = new UploadHandlerRaw(bodyRaw);
+            request.downloadHandler = new DownloadHandlerBuffer();
+            request.SetRequestHeader("Content-Type", "application/json");
+
+            yield return request.SendWebRequest();
+
+            if (request.result == UnityWebRequest.Result.Success)
+            {
+                BackendResponse res = null;
+                try {
+                    res = JsonUtility.FromJson<BackendResponse>(request.downloadHandler.text);
+                } catch {}
+
+                if (res != null && res.user != null)
+                {
+                    AccountManager.Instance.CurrentAccount = new Account {
+                        Username = res.user.username,
+                        Email = res.user.email
+                    };
+                }
+
+                PlayerPrefs.SetString("loggedInUser", id);
+                PlayerPrefs.Save();
+
+                SetFeedback("Login successful", true);
+                SceneManager.LoadScene(mainMenuSceneName);
+            }
+            else
+            {
+                string errMsg = "Login failed";
+                try
+                {
+                    BackendResponse res = JsonUtility.FromJson<BackendResponse>(request.downloadHandler.text);
+                    if (res != null && !string.IsNullOrEmpty(res.error)) errMsg = res.error;
+                }
+                catch {}
+                SetFeedback(errMsg, false);
+            }
         }
     }
 
