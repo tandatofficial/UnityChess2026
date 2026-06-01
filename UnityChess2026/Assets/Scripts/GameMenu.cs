@@ -16,6 +16,9 @@ public class GameMenu : MonoBehaviour
     [Header("Difficulty back button layer")]
     public GameObject backButtonLayer;
 
+    [Header("Settings panel")]
+    public GameObject settingsPanel;
+
     [Header("Pause menu")]
     public PauseMenuManager pauseMenuManager;
     public GameObject pauseMenuPanel;
@@ -46,6 +49,11 @@ public class GameMenu : MonoBehaviour
         if (backButtonLayer != null)
         {
             backButtonLayer.SetActive(false);
+        }
+
+        if (settingsPanel != null)
+        {
+            settingsPanel.SetActive(false);
         }
 
         if (pauseMenuPanel != null)
@@ -148,7 +156,52 @@ public class GameMenu : MonoBehaviour
 
     public void OpenSettings()
     {
-        Debug.Log("Open settings menu (placeholder)");
+        ClearUiSelection();
+
+        if (titleMenuPanel != null)
+        {
+            titleMenuPanel.SetActive(false);
+        }
+
+        if (menuPanel != null)
+        {
+            menuPanel.SetActive(false);
+        }
+
+        if (backButtonLayer != null)
+        {
+            backButtonLayer.SetActive(false);
+        }
+
+        if (logoImage != null)
+        {
+            logoImage.SetActive(false);
+        }
+
+        if (settingsPanel != null)
+        {
+            settingsPanel.SetActive(true);
+        }
+    }
+
+    public void CloseSettings()
+    {
+        ClearUiSelection();
+
+        if (settingsPanel != null)
+        {
+            settingsPanel.SetActive(false);
+        }
+
+        if (logoImage != null)
+        {
+            logoImage.SetActive(true);
+        }
+
+        if (titleMenuPanel != null)
+        {
+            titleMenuPanel.SetActive(true);
+        }
     }
 
     public void QuitGameFromTitle()
