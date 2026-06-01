@@ -53,14 +53,16 @@ public class GameManager : MonoBehaviour
         if (validMoves.Count == 0)
         {
             StartCoroutine(new ShakeAnimation(0.25f, 0.15f).Play(piece));
-            CursorManager.Instance.SetDefault();
+            if (CursorManager.Instance != null)
+                CursorManager.Instance.SetDefault();
             return;
         }
 
         DeselectPiece();
         selectedPiece = piece;
         selectedPiece.Highlight(true);
-        CursorManager.Instance.SetHand();
+        if (CursorManager.Instance != null)
+            CursorManager.Instance.SetHand();
         HighlightValidMoves(validMoves);
     }
 
@@ -86,7 +88,8 @@ public class GameManager : MonoBehaviour
         // Nếu nước đi không hợp lệ
         if (!IsMoveLegal(selectedPiece, target))
         {
-            CursorManager.Instance.SetDefault();
+            if (CursorManager.Instance != null)
+                CursorManager.Instance.SetDefault();
             return;
         }
 
@@ -107,7 +110,8 @@ public class GameManager : MonoBehaviour
 
         // Di chuyển quân
         MovePiece(selectedPiece, row, col);
-        AudioManager.Instance.PlayMoveSound();
+        if (AudioManager.Instance != null)
+            AudioManager.Instance.PlayMoveSound();
 
         // ✅ Gửi nước đi tới server
         // SocketManager.Instance.SendMove($"{fromRow},{fromCol}->{row},{col}");
@@ -172,13 +176,14 @@ public class GameManager : MonoBehaviour
         selectedPiece = piece;
 
         ChessPiece targetPiece = pieceBoard[toRow, toCol];
-        bool wasFirstMove = !piece.hasMoved; 
+        bool wasFirstMove = !piece.hasMoved;
         MoveRecord record = new MoveRecord(piece, fromRow, fromCol, toRow, toCol, wasFirstMove, targetPiece);
         moveHistory.Push(record);
 
-        HandleCapture(pieceBoard[toRow, toCol]);
+        HandleCapture(targetPiece);
         MovePiece(piece, toRow, toCol);
-        AudioManager.Instance.PlayMoveSound();
+        if (AudioManager.Instance != null)
+            AudioManager.Instance.PlayMoveSound();
 
         if (HandlePromotionIfNeeded(piece))
         {
@@ -214,14 +219,16 @@ public class GameManager : MonoBehaviour
 
     public void EndGame(PieceColor winner)
     {
-        AudioManager.Instance.PlayWinSound();
+        if (AudioManager.Instance != null)
+            AudioManager.Instance.PlayWinSound();
         isMoving = false;
         Time.timeScale = 0f;
 
         foreach (ChessPiece piece in pieceBoard)
             if (piece != null) piece.ResetHighlight();
 
-        UIManager.Instance.ShowWinScreen(winner);
+        if (UIManager.Instance != null)
+            UIManager.Instance.ShowWinScreen(winner);
     }
 
     public void EndDraw(string reason)
@@ -233,7 +240,8 @@ public class GameManager : MonoBehaviour
         foreach (ChessPiece piece in pieceBoard)
             if (piece != null) piece.ResetHighlight();
 
-        UIManager.Instance.ShowDrawScreen(reason); 
+        if (UIManager.Instance != null)
+            UIManager.Instance.ShowDrawScreen(reason); 
     }
 
 
@@ -244,7 +252,8 @@ public class GameManager : MonoBehaviour
             selectedPiece.Highlight(false);
             ClearHighlights();
             selectedPiece = null;
-            CursorManager.Instance.SetDefault();
+            if (CursorManager.Instance != null)
+                CursorManager.Instance.SetDefault();
         }
     }
 
@@ -308,7 +317,8 @@ public class GameManager : MonoBehaviour
         if (target != null && target.color != selectedPiece.color)
         {
             target.DisableCollider();
-            CaptureManager.Instance.CapturePiece(target);
+            if (CaptureManager.Instance != null)
+                CaptureManager.Instance.CapturePiece(target);
             pieceBoard[target.currentRow, target.currentCol] = null;
         }
     }
@@ -349,7 +359,8 @@ public class GameManager : MonoBehaviour
     {
         if (piece.type == PieceType.Pawn && (piece.currentRow == 0 || piece.currentRow == 7))
         {
-            PromotionManager.Instance.StartPromotion(piece);
+            if (PromotionManager.Instance != null)
+                PromotionManager.Instance.StartPromotion(piece);
             return true;
         }
         return false;
@@ -367,7 +378,8 @@ public class GameManager : MonoBehaviour
         {
             currentKing.Highlight(false, true);
             StartCoroutine(new ShakeAnimation(0.25f, 0.1f).Play(currentKing));
-            AudioManager.Instance.PlayCheckSound();
+            if (AudioManager.Instance != null)
+                AudioManager.Instance.PlayCheckSound();
 
             foreach (var observer in checkObservers)
                 observer.OnKingInCheck(opponent);
