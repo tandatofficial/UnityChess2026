@@ -1,65 +1,222 @@
+using System;
 using UnityEngine;
+using UnityEngine.EventSystems;
 
 public class GameMenu : MonoBehaviour
 {
-    [Header("Giao diện Menu Đầu Game")]
-    public GameObject titleMenuPanel; // Bảng tên game và các nút Play, Quit
+    [Header("Title menu panel")]
+    public GameObject titleMenuPanel;
 
-    [Header("Giao diện Chọn Độ Khó")]
-    public GameObject menuPanel; 
+    [Header("Logo image")]
+    public GameObject logoImage;
 
-    [Header("Kéo thả các nút Undo/Hint vào đây")]
-    public GameObject[] easyModeOnlyUI; 
+    [Header("Difficulty menu panel")]
+    public GameObject menuPanel;
 
-    [Header("Kéo thả nút Pause (Cài đặt) vào đây")]
-    public GameObject pauseButton; 
+    [Header("Difficulty back button layer")]
+    public GameObject backButtonLayer;
 
-    void Start()
+    [Header("Pause menu")]
+    public PauseMenuManager pauseMenuManager;
+    public GameObject pauseMenuPanel;
+
+    [Header("Undo/Hint UI elements")]
+    public GameObject[] easyModeOnlyUI;
+
+    [Header("Pause button")]
+    public GameObject pauseButton;
+
+    private void Start()
     {
-        // Khi vừa mở game: Bật Menu Chính, Tắt Menu Độ khó và Tắt nút Pause
-        if (titleMenuPanel != null) titleMenuPanel.SetActive(true);
-        if (menuPanel != null) menuPanel.SetActive(false);
-        if (pauseButton != null) pauseButton.SetActive(false);
-        
-        // Đảm bảo game không bị đóng băng thời gian
-        Time.timeScale = 1f; 
+        if (titleMenuPanel != null)
+        {
+            titleMenuPanel.SetActive(true);
+        }
+
+        if (menuPanel != null)
+        {
+            menuPanel.SetActive(false);
+        }
+
+        if (logoImage != null)
+        {
+            logoImage.SetActive(true);
+        }
+
+        if (backButtonLayer != null)
+        {
+            backButtonLayer.SetActive(false);
+        }
+
+        if (pauseMenuPanel != null)
+        {
+            pauseMenuPanel.SetActive(false);
+        }
+
+        if (pauseButton != null)
+        {
+            pauseButton.SetActive(false);
+        }
+
+        if (pauseMenuManager != null)
+        {
+            pauseMenuManager.SetPauseInputEnabled(false);
+        }
+
+        Time.timeScale = 1f;
     }
 
-    // --- CÁC HÀM CHO MENU CHÍNH ---
     public void ShowDifficultyMenu()
     {
-        // Bấm "Bắt đầu chơi" -> Tắt Menu Chính, Bật Menu Chọn độ khó
-        if (titleMenuPanel != null) titleMenuPanel.SetActive(false);
-        if (menuPanel != null) menuPanel.SetActive(true);
+        ClearUiSelection();
+
+        if (pauseMenuPanel != null)
+        {
+            pauseMenuPanel.SetActive(false);
+        }
+
+        if (pauseButton != null)
+        {
+            pauseButton.SetActive(false);
+        }
+
+        if (pauseMenuManager != null)
+        {
+            pauseMenuManager.SetPauseInputEnabled(false);
+        }
+
+        if (titleMenuPanel != null)
+        {
+            titleMenuPanel.SetActive(false);
+        }
+
+        if (menuPanel != null)
+        {
+            menuPanel.SetActive(true);
+        }
+
+        if (logoImage != null)
+        {
+            logoImage.SetActive(false);
+        }
+
+        if (backButtonLayer != null)
+        {
+            backButtonLayer.SetActive(true);
+        }
+    }
+
+    public void BackToMainMenuFromDifficultyMenu()
+    {
+        ClearUiSelection();
+
+        if (menuPanel != null)
+        {
+            menuPanel.SetActive(false);
+        }
+
+        if (logoImage != null)
+        {
+            logoImage.SetActive(true);
+        }
+
+        if (backButtonLayer != null)
+        {
+            backButtonLayer.SetActive(false);
+        }
+
+        if (pauseMenuPanel != null)
+        {
+            pauseMenuPanel.SetActive(false);
+        }
+
+        if (pauseButton != null)
+        {
+            pauseButton.SetActive(false);
+        }
+
+        if (pauseMenuManager != null)
+        {
+            pauseMenuManager.SetPauseInputEnabled(false);
+        }
+
+        if (titleMenuPanel != null)
+        {
+            titleMenuPanel.SetActive(true);
+        }
     }
 
     public void OpenSettings()
     {
-        Debug.Log("Mở menu Tùy chỉnh (Sẽ làm ở phần sau)");
-        // Sau này code đổi màu cờ, bàn cờ sẽ gọi ở đây
+        Debug.Log("Open settings menu (placeholder)");
     }
 
     public void QuitGameFromTitle()
     {
-        Debug.Log("Đang thoát game từ Menu Chính...");
+        Debug.Log("Quit game from title menu...");
         Application.Quit();
     }
 
-    // --- HÀM CHO MENU CHỌN ĐỘ KHÓ (Giữ nguyên) ---
     public void SelectDifficultyAndStart(int difficultyLevel)
     {
         PlayerPrefs.SetInt("Difficulty", difficultyLevel);
         PlayerPrefs.Save();
 
-        if (menuPanel != null) menuPanel.SetActive(false);
-        if (pauseButton != null) pauseButton.SetActive(true);
+        ClearUiSelection();
 
-        bool isEasyMode = (difficultyLevel == 1);
+        if (menuPanel != null)
+        {
+            menuPanel.SetActive(false);
+        }
+
+        if (titleMenuPanel != null)
+        {
+            titleMenuPanel.SetActive(false);
+        }
+
+        if (logoImage != null)
+        {
+            logoImage.SetActive(false);
+        }
+
+        if (backButtonLayer != null)
+        {
+            backButtonLayer.SetActive(false);
+        }
+
+        if (pauseMenuPanel != null)
+        {
+            pauseMenuPanel.SetActive(false);
+        }
+
+        if (pauseButton != null)
+        {
+            pauseButton.SetActive(true);
+        }
+
+        if (pauseMenuManager != null)
+        {
+            pauseMenuManager.SetPauseInputEnabled(true);
+        }
+
+        bool isEasyMode = difficultyLevel == 1;
         foreach (GameObject uiElement in easyModeOnlyUI)
         {
-            if (uiElement != null) uiElement.SetActive(isEasyMode);
+            if (uiElement != null)
+            {
+                uiElement.SetActive(isEasyMode);
+            }
         }
-        
+
         GameManager.Instance.UpdatePieceColliders();
     }
+
+    private static void ClearUiSelection()
+    {
+        if (EventSystem.current != null)
+        {
+            EventSystem.current.SetSelectedGameObject(null);
+        }
+    }
+
 }
