@@ -1,10 +1,14 @@
-require('dotenv').config();
+const path = require('path');
+const dotenv = require('dotenv');
+const result = dotenv.config({ path: path.join(__dirname, '.env'), override: true });
+console.log("Dotenv result:", result);
+console.log("Loaded MAILTRAP_USER:", process.env.MAILTRAP_USER);
+console.log("Loaded MAILTRAP_PASS:", process.env.MAILTRAP_PASS ? "EXISTS" : "MISSING");
 const express = require('express');
 const cors = require('cors');
 const http = require('http');
 const crypto = require('crypto');
 const fs = require('fs');
-const path = require('path');
 const nodemailer = require('nodemailer');
 const swaggerJsdoc = require('swagger-jsdoc');
 const swaggerUi = require('swagger-ui-express');
@@ -49,27 +53,48 @@ function generateSalt() {
 }
 
 // Email setup
-const transporter = nodemailer.createTransport({
-  host: "sandbox.smtp.mailtrap.io",
-  port: 2525,
-  auth: {
-    user: process.env.MAILTRAP_USER,
-    pass: process.env.MAILTRAP_PASS
-  }
-});
+let transporter;
+const isGmailConfigured = (process.env.EMAIL_USER && process.env.EMAIL_PASS && !process.env.EMAIL_USER.includes("your_gmail")) || 
+                          (process.env.MAILTRAP_USER && process.env.MAILTRAP_USER.includes("@gmail.com"));
+
+const emailUser = isGmailConfigured ? (process.env.EMAIL_USER || process.env.MAILTRAP_USER) : null;
+const emailPass = isGmailConfigured ? (process.env.EMAIL_PASS || process.env.MAILTRAP_PASS) : null;
+
+if (isGmailConfigured) {
+  transporter = nodemailer.createTransport({
+    service: 'gmail',
+    auth: {
+      user: emailUser,
+      pass: emailPass
+    }
+  });
+} else {
+  transporter = nodemailer.createTransport({
+    host: "sandbox.smtp.mailtrap.io",
+    port: 2525,
+    auth: {
+      user: process.env.MAILTRAP_USER,
+      pass: process.env.MAILTRAP_PASS
+    }
+  });
+}
 
 async function sendVerificationEmail(email, code) {
   console.log(`✉️ Verification code for [${email}] is: ${code}`);
   
-  if (!process.env.MAILTRAP_USER || !process.env.MAILTRAP_PASS || 
-      process.env.MAILTRAP_USER.includes("your_mailtrap") || 
-      process.env.MAILTRAP_PASS.includes("your_mailtrap")) {
-    console.log("⚠️ Mailtrap credentials not configured. Verification email was not sent, but you can use the code printed above.");
+  const isMailtrapConfigured = process.env.MAILTRAP_USER && 
+                               process.env.MAILTRAP_PASS && 
+                               !process.env.MAILTRAP_USER.includes("your_mailtrap") && 
+                               !process.env.MAILTRAP_PASS.includes("your_mailtrap") &&
+                               !process.env.MAILTRAP_USER.includes("@gmail.com");
+
+  if (!isGmailConfigured && !isMailtrapConfigured) {
+    console.log("⚠️ No SMTP credentials configured. Verification email was not sent, but you can use the code printed above.");
     return;
   }
 
   const mailOptions = {
-    from: '"Chess Game" <no-reply@chessgame.com>',
+    from: isGmailConfigured ? `"${emailUser}" <${emailUser}>` : '"Chess Game" <no-reply@chessgame.com>',
     to: email,
     subject: "Chess Game - Verify your registration",
     text: `Your verification code is: ${code}. It will expire in 10 minutes.`,
@@ -80,7 +105,7 @@ async function sendVerificationEmail(email, code) {
     await transporter.sendMail(mailOptions);
     console.log(`📬 Verification email sent successfully to ${email}`);
   } catch (error) {
-    console.error("❌ Error sending email via Mailtrap:", error);
+    console.error("❌ Error sending email:", error);
   }
 }
 
@@ -177,7 +202,16 @@ app.post('/api/auth/register', async (req, res) => {
 
   await sendVerificationEmail(email, code);
 
-  res.json({ message: "Registration successful. Please check your email for the verification code." });
+  const isMailtrapConfigured = process.env.MAILTRAP_USER && 
+                               process.env.MAILTRAP_PASS && 
+                               !process.env.MAILTRAP_USER.includes("your_mailtrap") && 
+                               !process.env.MAILTRAP_PASS.includes("your_mailtrap");
+
+  if (isGmailConfigured || isMailtrapConfigured) {
+    res.json({ message: "Registration successful. Please check your email for the verification code." });
+  } else {
+    res.json({ message: `Registration successful. [TEST MODE] Code is: ${code}` });
+  }
 });
 
 /**
@@ -291,7 +325,9 @@ app.post('/api/auth/login', (req, res) => {
     message: "Login successful.",
     user: {
       username: user.username,
-      email: user.email
+      email: user.email,
+      passwordHash: user.passwordHash,
+      salt: user.salt
     }
   });
 });

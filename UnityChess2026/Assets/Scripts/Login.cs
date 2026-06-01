@@ -16,6 +16,8 @@ public class Account
 {
     public string Username;
     public string Email;
+    public string PasswordHash;
+    public string Salt;
 }
 
 public class AccountManager
@@ -42,6 +44,7 @@ public class Login : MonoBehaviour
     public GameObject startPanel;
     public GameObject loginPanel;
     public GameObject registerPanel;
+    public GameObject verificationPanel;
 
     [Header("Login Fields")]
     public TMP_InputField loginUsernameOrEmail;
@@ -57,8 +60,9 @@ public class Login : MonoBehaviour
     public TMP_Text feedbackText;
     public TMP_Text currentUserText;
 
-    private GameObject verificationPanel;
-    private TMP_InputField verificationCodeInput;
+    [Header("Verification Fields")]
+    public TMP_InputField verificationCodeInput;
+
     private string pendingVerificationEmail;
 
     private void Awake()
@@ -72,7 +76,15 @@ public class Login : MonoBehaviour
 
     private void Start()
     {
-        CreateVerificationPanel();
+        if (verificationPanel == null)
+        {
+            CreateVerificationPanel();
+        }
+        else
+        {
+            verificationPanel.SetActive(false);
+            ConfigureVerificationButtons();
+        }
         ShowStartPanel();
         UpdateCurrentUserUI();
     }
@@ -186,17 +198,53 @@ public class Login : MonoBehaviour
         Button[] buttons = verificationPanel.GetComponentsInChildren<Button>(true);
         foreach (var b in buttons)
         {
-            TMP_Text btnText = b.GetComponentInChildren<TMP_Text>();
-            if (btnText != null && (btnText.text == "Login" || btnText.text == "LOGIN"))
+            string btnName = b.gameObject.name.ToLower();
+            TMP_Text btnTextComp = b.GetComponentInChildren<TMP_Text>();
+            string btnText = btnTextComp != null ? btnTextComp.text.ToLower() : "";
+
+            bool isBackButton = btnName.Contains("back") || btnName.Contains("cancel") || 
+                               btnText.Contains("back") || btnText.Contains("cancel") || btnText.Contains("quay");
+
+            if (isBackButton)
             {
-                btnText.text = "Verify";
-                b.onClick.RemoveAllListeners();
+                b.onClick = new Button.ButtonClickedEvent();
+                b.onClick.AddListener(ShowStartPanel);
+            }
+            else
+            {
+                if (btnTextComp != null && (btnTextComp.text == "Login" || btnTextComp.text == "LOGIN"))
+                {
+                    btnTextComp.text = "Verify";
+                }
+                b.onClick = new Button.ButtonClickedEvent();
                 b.onClick.AddListener(OnVerifyButton);
             }
-            else if (btnText != null && (btnText.text == "Back" || btnText.text == "BACK"))
+        }
+    }
+
+    private void ConfigureVerificationButtons()
+    {
+        if (verificationPanel == null) return;
+
+        Button[] buttons = verificationPanel.GetComponentsInChildren<Button>(true);
+        foreach (var b in buttons)
+        {
+            string btnName = b.gameObject.name.ToLower();
+            TMP_Text btnTextComp = b.GetComponentInChildren<TMP_Text>();
+            string btnText = btnTextComp != null ? btnTextComp.text.ToLower() : "";
+
+            bool isBackButton = btnName.Contains("back") || btnName.Contains("cancel") || 
+                               btnText.Contains("back") || btnText.Contains("cancel") || btnText.Contains("quay");
+
+            if (isBackButton)
             {
-                b.onClick.RemoveAllListeners();
+                b.onClick = new Button.ButtonClickedEvent();
                 b.onClick.AddListener(ShowStartPanel);
+            }
+            else
+            {
+                b.onClick = new Button.ButtonClickedEvent();
+                b.onClick.AddListener(OnVerifyButton);
             }
         }
     }
@@ -254,6 +302,8 @@ public class Login : MonoBehaviour
     {
         public string username;
         public string email;
+        public string passwordHash;
+        public string salt;
     }
 
     private IEnumerator RegisterCoroutine(string username, string email, string password)
@@ -276,7 +326,14 @@ public class Login : MonoBehaviour
             if (request.result == UnityWebRequest.Result.Success)
             {
                 pendingVerificationEmail = email;
-                SetFeedback("Registration successful. Check your email for verification code.", true);
+                string successMsg = "Registration successful. Check your email for verification code.";
+                try
+                {
+                    BackendResponse res = JsonUtility.FromJson<BackendResponse>(request.downloadHandler.text);
+                    if (res != null && !string.IsNullOrEmpty(res.message)) successMsg = res.message;
+                }
+                catch {}
+                SetFeedback(successMsg, true);
 
                 if (regUsername) regUsername.text = "";
                 if (regEmail) regEmail.text = "";
@@ -363,7 +420,9 @@ public class Login : MonoBehaviour
                 {
                     AccountManager.Instance.CurrentAccount = new Account {
                         Username = res.user.username,
-                        Email = res.user.email
+                        Email = res.user.email,
+                        PasswordHash = res.user.passwordHash,
+                        Salt = res.user.salt
                     };
                 }
 
