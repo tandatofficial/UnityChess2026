@@ -6640,6 +6640,8 @@ MonoBehaviour:
   pauseMenuPanel: {fileID: 1783949133}
   easyModeOnlyUI: []
   pauseButton: {fileID: 1110608870}
+  logoutButton: {fileID: 0}
+  loginSceneName: HomeUI
 --- !u!1 &1056762688
 GameObject:
   m_ObjectHideFlags: 0

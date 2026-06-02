@@ -1,13 +1,349 @@
+const path = require('path');
+const dotenv = require('dotenv');
+const result = dotenv.config({ path: path.join(__dirname, '.env'), override: true });
+console.log("Dotenv result:", result);
+console.log("Loaded MAILTRAP_USER:", process.env.MAILTRAP_USER);
+console.log("Loaded MAILTRAP_PASS:", process.env.MAILTRAP_PASS ? "EXISTS" : "MISSING");
+const express = require('express');
+const cors = require('cors');
+const http = require('http');
+const crypto = require('crypto');
+const fs = require('fs');
+const nodemailer = require('nodemailer');
+const swaggerJsdoc = require('swagger-jsdoc');
+const swaggerUi = require('swagger-ui-express');
 const { Server } = require("socket.io");
-const io = new Server({
+
+const PORT = process.env.PORT || 11100;
+const USERS_FILE = path.join(__dirname, 'users.json');
+
+const app = express();
+app.use(cors());
+app.use(express.json());
+
+// Load / Save users helper functions
+function loadUsers() {
+  if (!fs.existsSync(USERS_FILE)) {
+    fs.writeFileSync(USERS_FILE, JSON.stringify({ users: [] }, null, 2));
+  }
+  try {
+    const data = fs.readFileSync(USERS_FILE, 'utf8');
+    return JSON.parse(data) || { users: [] };
+  } catch (err) {
+    console.error("Error reading users file:", err);
+    return { users: [] };
+  }
+}
+
+function saveUsers(data) {
+  try {
+    fs.writeFileSync(USERS_FILE, JSON.stringify(data, null, 2));
+  } catch (err) {
+    console.error("Error writing users file:", err);
+  }
+}
+
+// Crypto Helpers
+function hashPassword(password, salt) {
+  return crypto.pbkdf2Sync(password, Buffer.from(salt, 'hex'), 10000, 32, 'sha256').toString('hex');
+}
+
+function generateSalt() {
+  return crypto.randomBytes(16).toString('hex');
+}
+
+// Email setup
+let transporter;
+const isGmailConfigured = (process.env.EMAIL_USER && process.env.EMAIL_PASS && !process.env.EMAIL_USER.includes("your_gmail")) || 
+                          (process.env.MAILTRAP_USER && process.env.MAILTRAP_USER.includes("@gmail.com"));
+
+const emailUser = isGmailConfigured ? (process.env.EMAIL_USER || process.env.MAILTRAP_USER) : null;
+const emailPass = isGmailConfigured ? (process.env.EMAIL_PASS || process.env.MAILTRAP_PASS) : null;
+
+if (isGmailConfigured) {
+  transporter = nodemailer.createTransport({
+    service: 'gmail',
+    auth: {
+      user: emailUser,
+      pass: emailPass
+    }
+  });
+} else {
+  transporter = nodemailer.createTransport({
+    host: "sandbox.smtp.mailtrap.io",
+    port: 2525,
+    auth: {
+      user: process.env.MAILTRAP_USER,
+      pass: process.env.MAILTRAP_PASS
+    }
+  });
+}
+
+async function sendVerificationEmail(email, code) {
+  console.log(`✉️ Verification code for [${email}] is: ${code}`);
+  
+  const isMailtrapConfigured = process.env.MAILTRAP_USER && 
+                               process.env.MAILTRAP_PASS && 
+                               !process.env.MAILTRAP_USER.includes("your_mailtrap") && 
+                               !process.env.MAILTRAP_PASS.includes("your_mailtrap") &&
+                               !process.env.MAILTRAP_USER.includes("@gmail.com");
+
+  if (!isGmailConfigured && !isMailtrapConfigured) {
+    console.log("⚠️ No SMTP credentials configured. Verification email was not sent, but you can use the code printed above.");
+    return;
+  }
+
+  const mailOptions = {
+    from: isGmailConfigured ? `"${emailUser}" <${emailUser}>` : '"Chess Game" <no-reply@chessgame.com>',
+    to: email,
+    subject: "Chess Game - Verify your registration",
+    text: `Your verification code is: ${code}. It will expire in 10 minutes.`,
+    html: `<p>Your verification code is: <b>${code}</b>. It will expire in 10 minutes.</p>`
+  };
+
+  try {
+    await transporter.sendMail(mailOptions);
+    console.log(`📬 Verification email sent successfully to ${email}`);
+  } catch (error) {
+    console.error("❌ Error sending email:", error);
+  }
+}
+
+// Swagger configuration
+const swaggerOptions = {
+  definition: {
+    openapi: '3.0.0',
+    info: {
+      title: 'Chess Game API',
+      version: '1.0.0',
+      description: 'API for Chess Game registration, login, and email verification. Test verification using Swagger.',
+    },
+    servers: [
+      {
+        url: `http://localhost:${PORT}`,
+      },
+    ],
+  },
+  apis: [__filename], // current file
+};
+
+const swaggerDocs = swaggerJsdoc(swaggerOptions);
+app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerDocs));
+
+// ----------------------------------------------------
+// HTTP API Endpoints
+// ----------------------------------------------------
+
+/**
+ * @swagger
+ * /api/auth/register:
+ *   post:
+ *     summary: Register a new user
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - username
+ *               - email
+ *               - password
+ *             properties:
+ *               username:
+ *                 type: string
+ *               email:
+ *                 type: string
+ *               password:
+ *                 type: string
+ *     responses:
+ *       200:
+ *         description: Registration successful, verification code sent to email
+ *       400:
+ *         description: Bad request (missing fields, email/username already taken, etc.)
+ */
+app.post('/api/auth/register', async (req, res) => {
+  const { username, email, password } = req.body;
+  if (!username || !email || !password) {
+    return res.status(400).json({ error: "Missing required fields (username, email, password)." });
+  }
+
+  const db = loadUsers();
+  
+  // Check duplicates
+  const emailExists = db.users.some(u => u.email.toLowerCase() === email.toLowerCase());
+  if (emailExists) {
+    return res.status(400).json({ error: "Email is already registered." });
+  }
+
+  const userExists = db.users.some(u => u.username.toLowerCase() === username.toLowerCase());
+  if (userExists) {
+    return res.status(400).json({ error: "Username is already taken." });
+  }
+
+  // Create User
+  const salt = generateSalt();
+  const passwordHash = hashPassword(password, salt);
+  const code = Math.floor(100000 + Math.random() * 900000).toString(); // 6-digit code
+  const expiry = Date.now() + 10 * 60 * 1000; // 10 minutes from now
+
+  const newUser = {
+    username,
+    email,
+    passwordHash,
+    salt,
+    isVerified: false,
+    verificationCode: code,
+    verificationCodeExpiry: expiry
+  };
+
+  db.users.push(newUser);
+  saveUsers(db);
+
+  await sendVerificationEmail(email, code);
+
+  const isMailtrapConfigured = process.env.MAILTRAP_USER && 
+                               process.env.MAILTRAP_PASS && 
+                               !process.env.MAILTRAP_USER.includes("your_mailtrap") && 
+                               !process.env.MAILTRAP_PASS.includes("your_mailtrap");
+
+  if (isGmailConfigured || isMailtrapConfigured) {
+    res.json({ message: "Registration successful. Please check your email for the verification code." });
+  } else {
+    res.json({ message: `Registration successful. [TEST MODE] Code is: ${code}` });
+  }
+});
+
+/**
+ * @swagger
+ * /api/auth/verify:
+ *   post:
+ *     summary: Verify email verification code
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - email
+ *               - code
+ *             properties:
+ *               email:
+ *                 type: string
+ *               code:
+ *                 type: string
+ *     responses:
+ *       200:
+ *         description: Verification successful, user is now active
+ *       400:
+ *         description: Invalid or expired verification code
+ */
+app.post('/api/auth/verify', (req, res) => {
+  const { email, code } = req.body;
+  if (!email || !code) {
+    return res.status(400).json({ error: "Missing required fields (email, code)." });
+  }
+
+  const db = loadUsers();
+  const user = db.users.find(u => u.email.toLowerCase() === email.toLowerCase());
+  if (!user) {
+    return res.status(400).json({ error: "Account not found." });
+  }
+
+  if (user.isVerified) {
+    return res.status(400).json({ error: "Account is already verified." });
+  }
+
+  if (user.verificationCode !== code) {
+    return res.status(400).json({ error: "Invalid verification code." });
+  }
+
+  if (Date.now() > user.verificationCodeExpiry) {
+    return res.status(400).json({ error: "Verification code has expired." });
+  }
+
+  user.isVerified = true;
+  user.verificationCode = null;
+  user.verificationCodeExpiry = null;
+  saveUsers(db);
+
+  res.json({ message: "Email verification successful. You can now log in." });
+});
+
+/**
+ * @swagger
+ * /api/auth/login:
+ *   post:
+ *     summary: Log in a user
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - usernameOrEmail
+ *               - password
+ *             properties:
+ *               usernameOrEmail:
+ *                 type: string
+ *               password:
+ *                 type: string
+ *     responses:
+ *       200:
+ *         description: Login successful
+ *       400:
+ *         description: Invalid credentials or unverified email
+ */
+app.post('/api/auth/login', (req, res) => {
+  const { usernameOrEmail, password } = req.body;
+  if (!usernameOrEmail || !password) {
+    return res.status(400).json({ error: "Missing usernameOrEmail or password." });
+  }
+
+  const db = loadUsers();
+  const user = db.users.find(u => 
+    u.email.toLowerCase() === usernameOrEmail.toLowerCase() || 
+    u.username.toLowerCase() === usernameOrEmail.toLowerCase()
+  );
+
+  if (!user) {
+    return res.status(400).json({ error: "Account not found." });
+  }
+
+  const computedHash = hashPassword(password, user.salt);
+  if (computedHash !== user.passwordHash) {
+    return res.status(400).json({ error: "Invalid password." });
+  }
+
+  if (!user.isVerified) {
+    return res.status(400).json({ error: "Please verify your email before logging in." });
+  }
+
+  res.json({
+    message: "Login successful.",
+    user: {
+      username: user.username,
+      email: user.email,
+      passwordHash: user.passwordHash,
+      salt: user.salt
+    }
+  });
+});
+
+// Create Server
+const server = http.createServer(app);
+const io = new Server(server, {
   cors: {
     origin: "*"
   }
 });
 
+// Socket.IO Events (from original server.js)
 let whitePlayer = null;
 let blackPlayer = null;
-let playerNames = {}; // 👈 Dùng để lưu tên theo socket.id
+let playerNames = {};
 
 io.use((socket, next) => {
   if (socket.handshake.query.token === "UNITY") {
@@ -19,9 +355,9 @@ io.use((socket, next) => {
 
 io.on("connection", (socket) => {
   const playerName = socket.handshake.query.name || "Unknown";
-  playerNames[socket.id] = playerName; // 👈 Lưu tên
+  playerNames[socket.id] = playerName;
 
-  console.log(`🔌 New client: ${socket.id} (${playerName})`);
+  console.log(`🔌 New client connected: ${socket.id} (${playerName})`);
 
   let assignedColor = null;
   if (!whitePlayer) {
@@ -38,9 +374,7 @@ io.on("connection", (socket) => {
 
   socket.emit("assignColor", assignedColor);
   console.log(`🎨 Assigned ${assignedColor} to ${socket.id} (${playerName})`);
-  console.log(`✅ Client connected and assigned color: ${assignedColor}`);
 
-  // Ghi log tên người chơi và nước đi
   socket.on("move", (data) => {
     const name = playerNames[socket.id] || "Unknown";
     console.log(`♟️ ${name} played move: ${data}`);
@@ -51,10 +385,11 @@ io.on("connection", (socket) => {
     console.log(`❌ Disconnected: ${socket.id} (${playerNames[socket.id]})`);
     if (socket.id === whitePlayer) whitePlayer = null;
     if (socket.id === blackPlayer) blackPlayer = null;
-
-    delete playerNames[socket.id]; // Xoá tên khi disconnect
+    delete playerNames[socket.id];
   });
 });
 
-io.listen(11100);
-console.log("🟢 Server đang chạy ở cổng 11100");
+server.listen(PORT, () => {
+  console.log(`🟢 Chess server running on port ${PORT}`);
+  console.log(`📄 Swagger docs available at http://localhost:${PORT}/api-docs`);
+});
