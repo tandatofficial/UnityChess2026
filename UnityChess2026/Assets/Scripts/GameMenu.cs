@@ -43,6 +43,15 @@ public class GameMenu : MonoBehaviour
         {
             logoutButton = CreateLogoutButtonDynamically();
         }
+        else
+        {
+            Button btnComp = logoutButton.GetComponent<Button>();
+            if (btnComp != null)
+            {
+                btnComp.onClick.RemoveAllListeners();
+                btnComp.onClick.AddListener(Logout);
+            }
+        }
 
         if (titleMenuPanel != null)
         {
