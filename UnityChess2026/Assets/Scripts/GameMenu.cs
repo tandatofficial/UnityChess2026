@@ -283,20 +283,7 @@ public class GameMenu : MonoBehaviour
 
     private void PlaceLogoutButtonWithMenu()
     {
-        if (logoutButton == null) return;
-
-        Transform targetParent = null;
-        if (titleMenuPanel != null && titleMenuPanel.transform.parent != null)
-            targetParent = titleMenuPanel.transform.parent;
-        else if (menuPanel != null && menuPanel.transform.parent != null)
-            targetParent = menuPanel.transform.parent;
-
-        if (targetParent != null && logoutButton.transform.parent != targetParent)
-        {
-            logoutButton.transform.SetParent(targetParent, false);
-        }
-
-        logoutButton.transform.SetAsLastSibling();
+        // Preserve manually configured parent hierarchy and layout in Unity Editor.
     }
 
     // Dynamic creation removed.
