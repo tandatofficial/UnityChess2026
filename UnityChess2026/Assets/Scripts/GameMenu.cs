@@ -41,9 +41,18 @@ public class GameMenu : MonoBehaviour
     {
         if (logoutButton == null)
         {
-            logoutButton = CreateLogoutButtonDynamically();
+            // Auto-search for manually created logout button in the scene
+            GameObject foundBtn = GameObject.Find("Btn_Logout");
+            if (foundBtn == null) foundBtn = GameObject.Find("Logout");
+            if (foundBtn == null) foundBtn = GameObject.Find("LogoutButton");
+
+            if (foundBtn != null)
+            {
+                logoutButton = foundBtn;
+            }
         }
-        else
+
+        if (logoutButton != null)
         {
             Button btnComp = logoutButton.GetComponent<Button>();
             if (btnComp != null)
@@ -51,6 +60,10 @@ public class GameMenu : MonoBehaviour
                 btnComp.onClick.RemoveAllListeners();
                 btnComp.onClick.AddListener(Logout);
             }
+        }
+        else
+        {
+            Debug.LogWarning("Logout button not found in scene and not assigned in Inspector.");
         }
 
         if (titleMenuPanel != null)
@@ -286,72 +299,7 @@ public class GameMenu : MonoBehaviour
         logoutButton.transform.SetAsLastSibling();
     }
 
-    private GameObject CreateLogoutButtonDynamically()
-    {
-        if (titleMenuPanel == null) return null;
-
-        // Find a template button inside titleMenuPanel
-        Transform templateButtonTransform = titleMenuPanel.transform.Find("Btn_Settings");
-        if (templateButtonTransform == null)
-            templateButtonTransform = titleMenuPanel.transform.Find("Btn_Play");
-        
-        if (templateButtonTransform == null)
-        {
-            Button btn = titleMenuPanel.GetComponentInChildren<Button>(true);
-            if (btn != null)
-                templateButtonTransform = btn.transform;
-        }
-
-        if (templateButtonTransform == null)
-        {
-            Debug.LogError("Could not find any template button to clone for Logout button!");
-            return null;
-        }
-
-        // Clone the template
-        GameObject logoutBtnGo = Instantiate(templateButtonTransform.gameObject);
-        logoutBtnGo.name = "Btn_Logout";
-
-        // Update Text
-        TMP_Text tmpText = logoutBtnGo.GetComponentInChildren<TMP_Text>(true);
-        if (tmpText != null)
-        {
-            tmpText.text = "Logout";
-        }
-        else
-        {
-            Text legacyText = logoutBtnGo.GetComponentInChildren<Text>(true);
-            if (legacyText != null)
-            {
-                legacyText.text = "Logout";
-            }
-        }
-
-        // Update button click callback
-        Button buttonComp = logoutBtnGo.GetComponent<Button>();
-        if (buttonComp != null)
-        {
-            buttonComp.onClick.RemoveAllListeners();
-            buttonComp.onClick.AddListener(Logout);
-        }
-
-        // Configure Layout / RectTransform to be at the bottom center of the screen
-        RectTransform rectTransform = logoutBtnGo.GetComponent<RectTransform>();
-        if (rectTransform != null)
-        {
-            // Set anchors to bottom-center
-            rectTransform.anchorMin = new Vector2(0.5f, 0f);
-            rectTransform.anchorMax = new Vector2(0.5f, 0f);
-            rectTransform.pivot = new Vector2(0.5f, 0f);
-            
-            // Set size and position (50 units from bottom)
-            rectTransform.sizeDelta = new Vector2(200f, 50f);
-            rectTransform.anchoredPosition = new Vector2(0f, 350f);
-            rectTransform.localScale = Vector3.one;
-        }
-
-        return logoutBtnGo;
-    }
+    // Dynamic creation removed.
 
     private static void ClearUiSelection()
     {
