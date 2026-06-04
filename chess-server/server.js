@@ -13,35 +13,21 @@ const nodemailer = require('nodemailer');
 const swaggerJsdoc = require('swagger-jsdoc');
 const swaggerUi = require('swagger-ui-express');
 const { Server } = require("socket.io");
+const { createClient } = require('@supabase/supabase-js');
 
 const PORT = process.env.PORT || 11100;
-const USERS_FILE = path.join(__dirname, 'users.json');
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 
-// Load / Save users helper functions
-function loadUsers() {
-  if (!fs.existsSync(USERS_FILE)) {
-    fs.writeFileSync(USERS_FILE, JSON.stringify({ users: [] }, null, 2));
-  }
-  try {
-    const data = fs.readFileSync(USERS_FILE, 'utf8');
-    return JSON.parse(data) || { users: [] };
-  } catch (err) {
-    console.error("Error reading users file:", err);
-    return { users: [] };
-  }
+// Initialize Supabase Client
+const supabaseUrl = process.env.SUPABASE_URL;
+const supabaseKey = process.env.SUPABASE_KEY;
+if (!supabaseUrl || !supabaseKey) {
+  console.error("❌ ERROR: SUPABASE_URL and SUPABASE_KEY must be configured in .env!");
 }
-
-function saveUsers(data) {
-  try {
-    fs.writeFileSync(USERS_FILE, JSON.stringify(data, null, 2));
-  } catch (err) {
-    console.error("Error writing users file:", err);
-  }
-}
+const supabase = createClient(supabaseUrl, supabaseKey);
 
 // Crypto Helpers
 function hashPassword(password, salt) {
@@ -168,49 +154,75 @@ app.post('/api/auth/register', async (req, res) => {
     return res.status(400).json({ error: "Missing required fields (username, email, password)." });
   }
 
-  const db = loadUsers();
-  
-  // Check duplicates
-  const emailExists = db.users.some(u => u.email.toLowerCase() === email.toLowerCase());
-  if (emailExists) {
-    return res.status(400).json({ error: "Email is already registered." });
-  }
+  try {
+    // Check duplicate email
+    const { data: existingEmail, error: emailErr } = await supabase
+      .from('game_users')
+      .select('email')
+      .ilike('email', email)
+      .maybeSingle();
 
-  const userExists = db.users.some(u => u.username.toLowerCase() === username.toLowerCase());
-  if (userExists) {
-    return res.status(400).json({ error: "Username is already taken." });
-  }
+    if (emailErr) {
+      console.error("❌ Supabase email check error:", emailErr);
+      return res.status(500).json({ error: "Database query failed." });
+    }
+    if (existingEmail) {
+      return res.status(400).json({ error: "Email is already registered." });
+    }
 
-  // Create User
-  const salt = generateSalt();
-  const passwordHash = hashPassword(password, salt);
-  const code = Math.floor(100000 + Math.random() * 900000).toString(); // 6-digit code
-  const expiry = Date.now() + 10 * 60 * 1000; // 10 minutes from now
+    // Check duplicate username
+    const { data: existingUser, error: userErr } = await supabase
+      .from('game_users')
+      .select('username')
+      .ilike('username', username)
+      .maybeSingle();
 
-  const newUser = {
-    username,
-    email,
-    passwordHash,
-    salt,
-    isVerified: false,
-    verificationCode: code,
-    verificationCodeExpiry: expiry
-  };
+    if (userErr) {
+      console.error("❌ Supabase username check error:", userErr);
+      return res.status(500).json({ error: "Database query failed." });
+    }
+    if (existingUser) {
+      return res.status(400).json({ error: "Username is already taken." });
+    }
 
-  db.users.push(newUser);
-  saveUsers(db);
+    // Create User
+    const salt = generateSalt();
+    const passwordHash = hashPassword(password, salt);
+    const code = Math.floor(100000 + Math.random() * 900000).toString(); // 6-digit code
+    const expiry = Date.now() + 10 * 60 * 1000; // 10 minutes from now
 
-  await sendVerificationEmail(email, code);
+    const { error: insertErr } = await supabase
+      .from('game_users')
+      .insert([{
+        username,
+        email,
+        password_hash: passwordHash,
+        salt,
+        is_verified: false,
+        verification_code: code,
+        verification_code_expiry: expiry
+      }]);
 
-  const isMailtrapConfigured = process.env.MAILTRAP_USER && 
-                               process.env.MAILTRAP_PASS && 
-                               !process.env.MAILTRAP_USER.includes("your_mailtrap") && 
-                               !process.env.MAILTRAP_PASS.includes("your_mailtrap");
+    if (insertErr) {
+      console.error("❌ Supabase insert error:", insertErr);
+      return res.status(500).json({ error: "Failed to create user in database." });
+    }
 
-  if (isGmailConfigured || isMailtrapConfigured) {
-    res.json({ message: "Registration successful. Please check your email for the verification code." });
-  } else {
-    res.json({ message: `Registration successful. [TEST MODE] Code is: ${code}` });
+    await sendVerificationEmail(email, code);
+
+    const isMailtrapConfigured = process.env.MAILTRAP_USER && 
+                                 process.env.MAILTRAP_PASS && 
+                                 !process.env.MAILTRAP_USER.includes("your_mailtrap") && 
+                                 !process.env.MAILTRAP_PASS.includes("your_mailtrap");
+
+    if (isGmailConfigured || isMailtrapConfigured) {
+      res.json({ message: "Registration successful. Please check your email for the verification code." });
+    } else {
+      res.json({ message: `Registration successful. [TEST MODE] Code is: ${code}` });
+    }
+  } catch (err) {
+    console.error("❌ Register error:", err);
+    res.status(500).json({ error: "Internal server error." });
   }
 });
 
@@ -239,36 +251,56 @@ app.post('/api/auth/register', async (req, res) => {
  *       400:
  *         description: Invalid or expired verification code
  */
-app.post('/api/auth/verify', (req, res) => {
+app.post('/api/auth/verify', async (req, res) => {
   const { email, code } = req.body;
   if (!email || !code) {
     return res.status(400).json({ error: "Missing required fields (email, code)." });
   }
 
-  const db = loadUsers();
-  const user = db.users.find(u => u.email.toLowerCase() === email.toLowerCase());
-  if (!user) {
-    return res.status(400).json({ error: "Account not found." });
+  try {
+    const { data: user, error: queryErr } = await supabase
+      .from('game_users')
+      .select('*')
+      .ilike('email', email)
+      .maybeSingle();
+
+    if (queryErr || !user) {
+      console.error("❌ Supabase query error or not found:", queryErr);
+      return res.status(400).json({ error: "Account not found." });
+    }
+
+    if (user.is_verified) {
+      return res.status(400).json({ error: "Account is already verified." });
+    }
+
+    if (user.verification_code !== code) {
+      return res.status(400).json({ error: "Invalid verification code." });
+    }
+
+    if (Date.now() > Number(user.verification_code_expiry)) {
+      return res.status(400).json({ error: "Verification code has expired." });
+    }
+
+    // Update user verification status
+    const { error: updateErr } = await supabase
+      .from('game_users')
+      .update({
+        is_verified: true,
+        verification_code: null,
+        verification_code_expiry: null
+      })
+      .eq('id', user.id);
+
+    if (updateErr) {
+      console.error("❌ Supabase update error:", updateErr);
+      return res.status(500).json({ error: "Failed to update verification status." });
+    }
+
+    res.json({ message: "Email verification successful. You can now log in." });
+  } catch (err) {
+    console.error("❌ Verify error:", err);
+    res.status(500).json({ error: "Internal server error." });
   }
-
-  if (user.isVerified) {
-    return res.status(400).json({ error: "Account is already verified." });
-  }
-
-  if (user.verificationCode !== code) {
-    return res.status(400).json({ error: "Invalid verification code." });
-  }
-
-  if (Date.now() > user.verificationCodeExpiry) {
-    return res.status(400).json({ error: "Verification code has expired." });
-  }
-
-  user.isVerified = true;
-  user.verificationCode = null;
-  user.verificationCodeExpiry = null;
-  saveUsers(db);
-
-  res.json({ message: "Email verification successful. You can now log in." });
 });
 
 /**
@@ -296,40 +328,46 @@ app.post('/api/auth/verify', (req, res) => {
  *       400:
  *         description: Invalid credentials or unverified email
  */
-app.post('/api/auth/login', (req, res) => {
+app.post('/api/auth/login', async (req, res) => {
   const { usernameOrEmail, password } = req.body;
   if (!usernameOrEmail || !password) {
     return res.status(400).json({ error: "Missing usernameOrEmail or password." });
   }
 
-  const db = loadUsers();
-  const user = db.users.find(u => 
-    u.email.toLowerCase() === usernameOrEmail.toLowerCase() || 
-    u.username.toLowerCase() === usernameOrEmail.toLowerCase()
-  );
+  try {
+    const { data: user, error: queryErr } = await supabase
+      .from('game_users')
+      .select('*')
+      .or(`email.ilike.${usernameOrEmail},username.ilike.${usernameOrEmail}`)
+      .maybeSingle();
 
-  if (!user) {
-    return res.status(400).json({ error: "Account not found." });
-  }
-
-  const computedHash = hashPassword(password, user.salt);
-  if (computedHash !== user.passwordHash) {
-    return res.status(400).json({ error: "Invalid password." });
-  }
-
-  if (!user.isVerified) {
-    return res.status(400).json({ error: "Please verify your email before logging in." });
-  }
-
-  res.json({
-    message: "Login successful.",
-    user: {
-      username: user.username,
-      email: user.email,
-      passwordHash: user.passwordHash,
-      salt: user.salt
+    if (queryErr || !user) {
+      console.error("❌ Supabase query error or not found:", queryErr);
+      return res.status(400).json({ error: "Account not found." });
     }
-  });
+
+    const computedHash = hashPassword(password, user.salt);
+    if (computedHash !== user.password_hash) {
+      return res.status(400).json({ error: "Invalid password." });
+    }
+
+    if (!user.is_verified) {
+      return res.status(400).json({ error: "Please verify your email before logging in." });
+    }
+
+    res.json({
+      message: "Login successful.",
+      user: {
+        username: user.username,
+        email: user.email,
+        passwordHash: user.password_hash,
+        salt: user.salt
+      }
+    });
+  } catch (err) {
+    console.error("❌ Login error:", err);
+    res.status(500).json({ error: "Internal server error." });
+  }
 });
 
 // Create Server
