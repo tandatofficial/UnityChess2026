@@ -1,4 +1,4 @@
-﻿using System.Collections;
+using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 
@@ -127,7 +127,9 @@ public class GameManager : MonoBehaviour
         bool wasFirstMove = !selectedPiece.hasMoved; 
         
         // Tạo một bản ghi và cất vào ngăn kéo (Stack)
-        MoveRecord record = new MoveRecord(selectedPiece, fromRow, fromCol, row, col, wasFirstMove, targetPiece);
+        float whiteTime = ChessClock.Instance != null ? ChessClock.Instance.whiteTimeRemaining : 0f;
+        float blackTime = ChessClock.Instance != null ? ChessClock.Instance.blackTimeRemaining : 0f;
+        MoveRecord record = new MoveRecord(selectedPiece, fromRow, fromCol, row, col, wasFirstMove, targetPiece, whiteTime, blackTime);
         moveHistory.Push(record);
         // --- KẾT THÚC PHẦN THÊM MỚI ---
 
@@ -203,7 +205,9 @@ public class GameManager : MonoBehaviour
 
         ChessPiece targetPiece = pieceBoard[toRow, toCol];
         bool wasFirstMove = !piece.hasMoved;
-        MoveRecord record = new MoveRecord(piece, fromRow, fromCol, toRow, toCol, wasFirstMove, targetPiece);
+        float whiteTime = ChessClock.Instance != null ? ChessClock.Instance.whiteTimeRemaining : 0f;
+        float blackTime = ChessClock.Instance != null ? ChessClock.Instance.blackTimeRemaining : 0f;
+        MoveRecord record = new MoveRecord(piece, fromRow, fromCol, toRow, toCol, wasFirstMove, targetPiece, whiteTime, blackTime);
         moveHistory.Push(record);
 
         HandleCapture(targetPiece);
@@ -250,6 +254,9 @@ public class GameManager : MonoBehaviour
         isMoving = false;
         Time.timeScale = 0f;
 
+        if (ChessClock.Instance != null)
+            ChessClock.Instance.StopClock();
+
         foreach (ChessPiece piece in pieceBoard)
             if (piece != null) piece.ResetHighlight();
 
@@ -262,6 +269,9 @@ public class GameManager : MonoBehaviour
         Debug.Log("Game ended in a draw! Reason: " + reason);
         isMoving = false;
         Time.timeScale = 0f;
+
+        if (ChessClock.Instance != null)
+            ChessClock.Instance.StopClock();
 
         foreach (ChessPiece piece in pieceBoard)
             if (piece != null) piece.ResetHighlight();
@@ -667,10 +677,16 @@ public class GameManager : MonoBehaviour
         }
     }
 
-    // Lùi ĐÚNG 1 bước trên bàn cờ (được gọi bởi UndoLastMove)
     private void UndoSingleMove()
     {
         MoveRecord lastMove = moveHistory.Pop();
+
+        if (ChessClock.Instance != null)
+        {
+            ChessClock.Instance.whiteTimeRemaining = lastMove.whiteClockTime;
+            ChessClock.Instance.blackTimeRemaining = lastMove.blackClockTime;
+            ChessClock.Instance.UpdateClockUI();
+        }
 
         // 1. Dời quân cờ vừa đi về lại vị trí cũ
         ChessPiece piece = lastMove.movedPiece;
