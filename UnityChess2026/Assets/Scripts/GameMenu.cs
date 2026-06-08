@@ -79,6 +79,7 @@ public class GameMenu : MonoBehaviour
         if (logoImage != null)
         {
             logoImage.SetActive(true);
+            BringLogoToFront();
         }
 
         if (backButtonLayer != null)
@@ -112,6 +113,7 @@ public class GameMenu : MonoBehaviour
         }
 
         GameMenuUiSafety.PreparePanel(titleMenuPanel);
+        BringLogoToFront();
         PlaceLogoutButtonWithMenu();
 
         Time.timeScale = 1f;
@@ -162,6 +164,7 @@ public class GameMenu : MonoBehaviour
         }
 
         GameMenuUiSafety.PreparePanel(menuPanel);
+        BringBackButtonLayerToFront();
         PlaceLogoutButtonWithMenu();
     }
 
@@ -170,7 +173,11 @@ public class GameMenu : MonoBehaviour
         ClearUiSelection();
 
         if (menuPanel != null) menuPanel.SetActive(false);
-        if (logoImage != null) logoImage.SetActive(true);
+        if (logoImage != null)
+        {
+            logoImage.SetActive(true);
+            BringLogoToFront();
+        }
         if (backButtonLayer != null) backButtonLayer.SetActive(false);
         if (pauseMenuPanel != null) pauseMenuPanel.SetActive(false);
         if (pauseButton != null) pauseButton.SetActive(false);
@@ -179,6 +186,7 @@ public class GameMenu : MonoBehaviour
         if (logoutButton != null) logoutButton.SetActive(true);
 
         GameMenuUiSafety.PreparePanel(titleMenuPanel);
+        BringLogoToFront();
         PlaceLogoutButtonWithMenu();
     }
 
@@ -224,6 +232,7 @@ public class GameMenu : MonoBehaviour
         if (logoImage != null)
         {
             logoImage.SetActive(true);
+            BringLogoToFront();
         }
 
         if (titleMenuPanel != null)
@@ -292,6 +301,46 @@ public class GameMenu : MonoBehaviour
     private void PlaceLogoutButtonWithMenu()
     {
         // Preserve manually configured parent hierarchy and layout in Unity Editor.
+    }
+
+    private void BringBackButtonLayerToFront()
+    {
+        if (backButtonLayer == null)
+        {
+            return;
+        }
+
+        if (!backButtonLayer.activeSelf)
+        {
+            backButtonLayer.SetActive(true);
+        }
+
+        backButtonLayer.transform.SetAsLastSibling();
+    }
+
+    private void BringLogoToFront()
+    {
+        if (logoImage == null)
+        {
+            return;
+        }
+
+        Transform logoRoot = logoImage.transform.parent != null ? logoImage.transform.parent : logoImage.transform;
+
+        if (logoRoot != null && !logoRoot.gameObject.activeSelf)
+        {
+            logoRoot.gameObject.SetActive(true);
+        }
+
+        if (!logoImage.activeSelf)
+        {
+            logoImage.SetActive(true);
+        }
+
+        if (logoRoot != null)
+        {
+            logoRoot.SetAsLastSibling();
+        }
     }
 
     // Dynamic creation removed.
