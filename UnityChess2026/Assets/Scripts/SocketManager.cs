@@ -25,8 +25,24 @@ public class SocketManager : MonoBehaviour
     private void Awake()
     {
         if (Instance == null) Instance = this;
-        else Destroy(gameObject);
-        DontDestroyOnLoad(gameObject);
+        else
+        {
+            Destroy(this);
+            return;
+        }
+
+        if (GetComponent<GameManager>() == null)
+        {
+            DontDestroyOnLoad(gameObject);
+        }
+    }
+
+    private void OnDestroy()
+    {
+        if (Instance == this)
+        {
+            Instance = null;
+        }
     }
 
     private void Start()

@@ -21,8 +21,34 @@ public class GameManager : MonoBehaviour
 
     private void Awake()
     {
-        if (Instance == null) Instance = this;
-        else Destroy(gameObject);
+        if (Instance != null && Instance != this)
+        {
+            Destroy(Instance.gameObject);
+        }
+
+        Instance = this;
+        ResetRuntimeState();
+    }
+
+    private void OnDestroy()
+    {
+        if (Instance == this)
+        {
+            Instance = null;
+        }
+    }
+
+    private void ResetRuntimeState()
+    {
+        pieceBoard = new ChessPiece[8, 8];
+        selectedPiece = null;
+        currentTurn = PieceColor.White;
+        highlightedSquares.Clear();
+        checkObservers.Clear();
+        isMoving = false;
+        lastCheckedKing = null;
+        moveHistory.Clear();
+        Time.timeScale = 1f;
     }
 
     public void UpdatePieceColliders()
