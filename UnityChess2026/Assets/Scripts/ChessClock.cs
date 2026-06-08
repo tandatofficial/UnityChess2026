@@ -51,6 +51,8 @@ public class ChessClock : MonoBehaviour
     private TextMeshProUGUI blackLabel;
     private TextMeshProUGUI whiteTimeText;
     private TextMeshProUGUI blackTimeText;
+    private TextMeshProUGUI whiteDelayText;
+    private TextMeshProUGUI blackDelayText;
 
     private GameObject clockSetupButton;
     private GameObject settingsPanelInstance;
@@ -684,6 +686,24 @@ public class ChessClock : MonoBehaviour
         blackTimeText.alignment = TextAlignmentOptions.Right;
         blackTimeText.color = Color.white;
 
+        // Black Delay Text
+        GameObject bDelayGo = new GameObject("BlackDelayText", typeof(RectTransform), typeof(TextMeshProUGUI));
+        bDelayGo.transform.SetParent(blackPanel.transform, false);
+        RectTransform bDelayRt = bDelayGo.GetComponent<RectTransform>();
+        bDelayRt.anchorMin = new Vector2(0, 0);
+        bDelayRt.anchorMax = new Vector2(1, 0);
+        bDelayRt.pivot = new Vector2(0, 0);
+        bDelayRt.sizeDelta = new Vector2(0, 20);
+        bDelayRt.anchoredPosition = new Vector2(10, 5);
+
+        blackDelayText = bDelayGo.GetComponent<TextMeshProUGUI>();
+        blackDelayText.font = font;
+        blackDelayText.text = "";
+        blackDelayText.fontSize = 11;
+        blackDelayText.fontStyle = FontStyles.Bold;
+        blackDelayText.alignment = TextAlignmentOptions.Left;
+        blackDelayText.color = new Color(0.9f, 0.45f, 0f, 1f);
+
         // --- WHITE PLAYER PANEL ---
         GameObject whitePanel = new GameObject("WhiteTimerPanel", typeof(RectTransform), typeof(Image));
         whitePanel.transform.SetParent(hudContainer.transform, false);
@@ -732,6 +752,24 @@ public class ChessClock : MonoBehaviour
         whiteTimeText.alignment = TextAlignmentOptions.Right;
         whiteTimeText.color = Color.white;
 
+        // White Delay Text
+        GameObject wDelayGo = new GameObject("WhiteDelayText", typeof(RectTransform), typeof(TextMeshProUGUI));
+        wDelayGo.transform.SetParent(whitePanel.transform, false);
+        RectTransform wDelayRt = wDelayGo.GetComponent<RectTransform>();
+        wDelayRt.anchorMin = new Vector2(0, 0);
+        wDelayRt.anchorMax = new Vector2(1, 0);
+        wDelayRt.pivot = new Vector2(0, 0);
+        wDelayRt.sizeDelta = new Vector2(0, 20);
+        wDelayRt.anchoredPosition = new Vector2(10, 5);
+
+        whiteDelayText = wDelayGo.GetComponent<TextMeshProUGUI>();
+        whiteDelayText.font = font;
+        whiteDelayText.text = "";
+        whiteDelayText.fontSize = 11;
+        whiteDelayText.fontStyle = FontStyles.Bold;
+        whiteDelayText.alignment = TextAlignmentOptions.Left;
+        whiteDelayText.color = new Color(0.9f, 0.45f, 0f, 1f);
+
         hudContainer.transform.SetAsLastSibling();
     }
 
@@ -741,6 +779,9 @@ public class ChessClock : MonoBehaviour
 
         whiteTimeText.text = FormatTime(whiteTimeRemaining);
         blackTimeText.text = FormatTime(blackTimeRemaining);
+
+        if (whiteDelayText != null) whiteDelayText.text = "";
+        if (blackDelayText != null) blackDelayText.text = "";
 
         if (GameManager.Instance == null) return;
 
@@ -756,6 +797,7 @@ public class ChessClock : MonoBehaviour
                 whiteBackground.color = Color.Lerp(new Color(0.85f, 0.15f, 0.15f, 0.9f), new Color(0.4f, 0.05f, 0.05f, 0.9f), pingPong);
                 whiteTimeText.color = Color.white;
                 whiteLabel.color = new Color(1f, 1f, 1f, 0.8f);
+                if (whiteDelayText != null) whiteDelayText.color = Color.yellow;
             }
             else
             {
@@ -763,6 +805,12 @@ public class ChessClock : MonoBehaviour
                 whiteBackground.color = new Color(0.95f, 0.95f, 0.95f, 0.95f);
                 whiteTimeText.color = new Color(0.08f, 0.08f, 0.08f, 1f);
                 whiteLabel.color = new Color(0.15f, 0.15f, 0.15f, 0.7f);
+                if (whiteDelayText != null) whiteDelayText.color = new Color(0.85f, 0.35f, 0f, 1f);
+            }
+
+            if (clockMode == ClockMode.SimpleDelay && delayTimeRemaining > 0f && whiteDelayText != null)
+            {
+                whiteDelayText.text = $"(Delay: {delayTimeRemaining:0.0}s)";
             }
         }
         else
@@ -783,6 +831,7 @@ public class ChessClock : MonoBehaviour
                 blackBackground.color = Color.Lerp(new Color(0.85f, 0.15f, 0.15f, 0.9f), new Color(0.4f, 0.05f, 0.05f, 0.9f), pingPong);
                 blackTimeText.color = Color.white;
                 blackLabel.color = new Color(1f, 1f, 1f, 0.8f);
+                if (blackDelayText != null) blackDelayText.color = Color.yellow;
             }
             else
             {
@@ -790,6 +839,12 @@ public class ChessClock : MonoBehaviour
                 blackBackground.color = new Color(0.95f, 0.95f, 0.95f, 0.95f);
                 blackTimeText.color = new Color(0.08f, 0.08f, 0.08f, 1f);
                 blackLabel.color = new Color(0.15f, 0.15f, 0.15f, 0.7f);
+                if (blackDelayText != null) blackDelayText.color = new Color(0.85f, 0.35f, 0f, 1f);
+            }
+
+            if (clockMode == ClockMode.SimpleDelay && delayTimeRemaining > 0f && blackDelayText != null)
+            {
+                blackDelayText.text = $"(Delay: {delayTimeRemaining:0.0}s)";
             }
         }
         else
@@ -798,19 +853,6 @@ public class ChessClock : MonoBehaviour
             blackBackground.color = new Color(0.18f, 0.18f, 0.22f, 0.4f);
             blackTimeText.color = new Color(0.6f, 0.6f, 0.6f, 1f);
             blackLabel.color = new Color(0.5f, 0.5f, 0.5f, 0.6f);
-        }
-
-        // 3. Simple Delay Text Addition
-        if (clockMode == ClockMode.SimpleDelay && delayTimeRemaining > 0f)
-        {
-            if (activeTurn == PieceColor.White)
-            {
-                whiteTimeText.text = $"{FormatTime(whiteTimeRemaining)} (Delay: {delayTimeRemaining:0.0}s)";
-            }
-            else
-            {
-                blackTimeText.text = $"{FormatTime(blackTimeRemaining)} (Delay: {delayTimeRemaining:0.0}s)";
-            }
         }
     }
 
