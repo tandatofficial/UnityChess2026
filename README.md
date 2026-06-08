@@ -34,3 +34,88 @@ Start the Node.js server (cd ServerNodeJS && node index.js)
 Play the scene Main in Unity
 
 Enjoy real-time online chess!
+
+## ⏱️ Chess Clock System
+
+The game includes a FIDE-style chess clock system to provide a more competitive and realistic chess experience.
+
+### Supported Time Controls
+
+The following official time formats are supported:
+
+* 1+0 (Bullet)
+* 1+1 (Bullet)
+* 3+0 (Blitz)
+* 3+2 (Blitz)
+* 5+0 (Blitz)
+* 10+0 (Rapid)
+* 10+5 (Rapid)
+* 15+10 (Rapid)
+* 30+0 (Classical)
+* 90+30 (Classical)
+
+Format:
+
+* First number = starting time (minutes)
+* Second number = increment added after every legal move (seconds)
+
+### How It Works
+
+* Each player has an independent chess clock.
+* Only the current player's clock is running.
+* After a legal move:
+
+  * The current player's clock stops.
+  * Increment time is added (if applicable).
+  * Turn switches to the opponent.
+  * The opponent's clock starts.
+
+### Timeout Rules
+
+A player immediately loses the game when their remaining time reaches zero.
+
+Examples:
+
+* White timer reaches 00:00 → Black wins by timeout.
+* Black timer reaches 00:00 → White wins by timeout.
+
+### Online Synchronization
+
+To prevent cheating, the server is responsible for managing the official game clock.
+
+The server:
+
+* Tracks both players' remaining time.
+* Validates moves.
+* Applies time increments.
+* Detects timeout conditions.
+* Synchronizes clock updates to all connected clients.
+
+The Unity client is responsible only for:
+
+* Displaying the remaining time.
+* Sending move requests.
+* Updating the UI based on server responses.
+
+### Clock Behavior
+
+The clock:
+
+* Starts only after both players have joined and the match begins.
+* Stops immediately when the game ends by:
+
+  * Checkmate
+  * Stalemate
+  * Draw
+  * Timeout
+  * Player disconnection
+
+### UI Features
+
+* White player timer display
+* Black player timer display
+* Current game result display
+* Time control selection before starting a match
+
+This system follows international chess timing standards and provides a fair competitive multiplayer experience.
+

@@ -15,8 +15,10 @@ public class MoveRecord
     public ChessPiece capturedPiece;
     
     // (Sau này có thể thêm thông tin về phong cấp, nhập thành nếu cần)
+    public float whiteClockTime;
+    public float blackClockTime;
 
-    public MoveRecord(ChessPiece movedPiece, int fromRow, int fromCol, int toRow, int toCol, bool isFirstMove, ChessPiece capturedPiece)
+    public MoveRecord(ChessPiece movedPiece, int fromRow, int fromCol, int toRow, int toCol, bool isFirstMove, ChessPiece capturedPiece, float whiteClockTime = 0f, float blackClockTime = 0f)
     {
         this.movedPiece = movedPiece;
         this.fromRow = fromRow;
@@ -25,5 +27,7 @@ public class MoveRecord
         this.toCol = toCol;
         this.isFirstMove = isFirstMove;
         this.capturedPiece = capturedPiece;
+        this.whiteClockTime = whiteClockTime;
+        this.blackClockTime = blackClockTime;
     }
 }

@@ -232,6 +232,14 @@ public class GameMenu : MonoBehaviour
         }
     }
 
+    public void OpenClockSettings()
+    {
+        if (ChessClock.Instance != null)
+        {
+            ChessClock.Instance.OpenSettingsPopup();
+        }
+    }
+
     public void QuitGameFromTitle()
     {
         Debug.Log("Quit game from title menu...");
