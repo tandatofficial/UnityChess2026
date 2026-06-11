@@ -39,6 +39,8 @@ public class GameMenu : MonoBehaviour
 
     private void Start()
     {
+        AutoPopulateEasyModeUI();
+
         if (logoutButton == null)
         {
             // Auto-search for manually created logout button in the scene
@@ -344,6 +346,40 @@ public class GameMenu : MonoBehaviour
     }
 
     // Dynamic creation removed.
+
+    private void AutoPopulateEasyModeUI()
+    {
+        if (easyModeOnlyUI == null || easyModeOnlyUI.Length == 0)
+        {
+            var foundUI = new System.Collections.Generic.List<GameObject>();
+            Transform hintT = FindChildDeep(transform, "Btn_Hint");
+            if (hintT == null) hintT = FindChildDeep(transform, "Hint");
+            if (hintT == null) hintT = FindChildDeep(transform, "HintButton");
+            if (hintT != null) foundUI.Add(hintT.gameObject);
+
+            Transform undoT = FindChildDeep(transform, "Btn_Undo");
+            if (undoT == null) undoT = FindChildDeep(transform, "Undo");
+            if (undoT == null) undoT = FindChildDeep(transform, "UndoButton");
+            if (undoT != null) foundUI.Add(undoT.gameObject);
+
+            if (foundUI.Count > 0)
+            {
+                easyModeOnlyUI = foundUI.ToArray();
+                Debug.Log($"[GameMenu] Auto-populated easyModeOnlyUI with {easyModeOnlyUI.Length} elements.");
+            }
+        }
+    }
+
+    private Transform FindChildDeep(Transform parent, string name)
+    {
+        if (parent.name == name) return parent;
+        foreach (Transform child in parent)
+        {
+            Transform found = FindChildDeep(child, name);
+            if (found != null) return found;
+        }
+        return null;
+    }
 
     private static void ClearUiSelection()
     {

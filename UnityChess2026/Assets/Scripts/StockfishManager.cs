@@ -69,10 +69,62 @@ public class StockfishManager : MonoBehaviour
         bestMoveCache = "";
         onMoveCalculated = callback; // Lưu lại nhiệm vụ trước khi nghĩ
 
+        // Tự động cấu hình độ khó (sức mạnh) cho Stockfish
+        if (callback == null)
+        {
+            // Lấy độ khó người chơi đã chọn (1: Easy, 2: Medium, 3: Hard)
+            int difficulty = PlayerPrefs.GetInt("Difficulty", 2);
+            SetDifficulty(difficulty);
+        }
+        else
+        {
+            // Khi xem gợi ý (Hint), dùng mức tốt nhất (Hard) để có nước đi chuẩn xác nhất
+            SetDifficulty(3);
+        }
+
         UnityEngine.Debug.Log($"🧠 AI bắt đầu suy nghĩ trong {thinkTimeMs}ms...");
         
         SendCommand($"position fen {moveHistoryStr}");
         SendCommand($"go movetime {thinkTimeMs}");
+    }
+
+    public void SetDifficulty(int difficulty)
+    {
+        // difficulty: 1 = Easy, 2 = Medium, 3 = Hard
+        int skillLevel = 20;
+        int targetElo = 1350;
+        bool limitStrength = false;
+
+        switch (difficulty)
+        {
+            case 1: // Dễ (Easy)
+                skillLevel = 0;      // Skill level thấp nhất (0/20) để đi nhiều nước lỗi ngớ ngẩn
+                targetElo = 800;     // Giới hạn Elo thấp nhất (800)
+                limitStrength = true;
+                break;
+            case 2: // Thường (Medium)
+                skillLevel = 5;      // Skill level trung bình khá (5/20)
+                targetElo = 1350;    // Elo trung bình (1350)
+                limitStrength = true;
+                break;
+            case 3: // Khó (Hard)
+                skillLevel = 20;     // Tối đa sức mạnh (Mặc định)
+                limitStrength = false;
+                break;
+        }
+
+        if (limitStrength)
+        {
+            SendCommand("setoption name UCI_LimitStrength value true");
+            SendCommand($"setoption name UCI_Elo value {targetElo}");
+        }
+        else
+        {
+            SendCommand("setoption name UCI_LimitStrength value false");
+        }
+
+        SendCommand($"setoption name Skill Level value {skillLevel}");
+        UnityEngine.Debug.Log($"[StockfishManager] Thiết lập độ khó: {difficulty} (Skill Level: {skillLevel}, LimitStrength: {limitStrength}, Elo: {targetElo})");
     }
 
     private void OnOutputDataReceived(object sender, DataReceivedEventArgs e)
