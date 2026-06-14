@@ -1,4 +1,4 @@
-﻿using System.Collections;
+using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 
@@ -24,6 +24,7 @@ public class CaptureManager : MonoBehaviour
     public void CapturePiece(ChessPiece piece)
     {
         piece.gameObject.SetActive(true); // Đảm bảo quân cờ không bị disable
+        piece.DisableComponent(); // Disable component to avoid Update conflicts
 
         // ❌ Tắt collider để không tương tác nữa
         var collider = piece.GetComponent<Collider>();

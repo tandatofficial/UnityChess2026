@@ -99,12 +99,12 @@ public class StockfishManager : MonoBehaviour
         {
             case 1: // Dễ (Easy)
                 skillLevel = 0;      // Skill level thấp nhất (0/20) để đi nhiều nước lỗi ngớ ngẩn
-                targetElo = 800;     // Giới hạn Elo thấp nhất (800)
+                targetElo = 450;     // Giới hạn Elo thấp nhất (800)
                 limitStrength = true;
                 break;
             case 2: // Thường (Medium)
                 skillLevel = 5;      // Skill level trung bình khá (5/20)
-                targetElo = 1350;    // Elo trung bình (1350)
+                targetElo = 800;    // Elo trung bình (1350)
                 limitStrength = true;
                 break;
             case 3: // Khó (Hard)

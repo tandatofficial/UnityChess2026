@@ -58,6 +58,16 @@ public class ChessClock : MonoBehaviour
     private GameObject settingsPanelInstance;
     private GameObject subPanelInstance;
 
+    public GameObject clockSettingsPrefab;
+
+    private T FindChildComponent<T>(Transform root, string path) where T : Component
+    {
+        Transform child = root.Find(path);
+        if (child != null) return child.GetComponent<T>();
+        Debug.LogWarning($"[ChessClock] Could not find child at path: {path}");
+        return null;
+    }
+
     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
     private static void OnSceneLoaded()
     {
@@ -77,6 +87,9 @@ public class ChessClock : MonoBehaviour
             DontDestroyOnLoad(gameObject);
             CreateProceduralSounds();
             LoadSettings();
+            
+            // Tự động tìm nạp Prefab từ thư mục Assets/Resources/
+            clockSettingsPrefab = Resources.Load<GameObject>("ClockSettingsOverlay");
         }
         else
         {
@@ -1615,6 +1628,262 @@ public class ChessClock : MonoBehaviour
         Canvas canvas = FindObjectOfType<Canvas>();
         if (canvas == null) return;
 
+        bool tempEnabled = isClockEnabled;
+        ClockMode tempMode = clockMode;
+        float tempBaseTime = baseTimeSeconds;
+        float tempInc = incrementSeconds;
+
+        int selectedPresetIndex = -1;
+        float[] presetSeconds = { 60f, 180f, 300f, 600f, 1800f };
+        for (int i = 0; i < presetSeconds.Length; i++)
+        {
+            if (Mathf.Approximately(tempBaseTime, presetSeconds[i]))
+                selectedPresetIndex = i;
+        }
+        if (selectedPresetIndex == -1) selectedPresetIndex = 5; // Custom
+
+        // UI references for interactive updates
+        GameObject customTimeContainer = null;
+        GameObject incContainer = null;
+        TextMeshProUGUI customTimeValText = null;
+        TextMeshProUGUI incValText = null;
+        Image enableClockBtnImg = null;
+        TextMeshProUGUI enableClockBtnText = null;
+
+        Image[] modeBtnImgs = new Image[3];
+        TextMeshProUGUI[] modeBtnTexts = new TextMeshProUGUI[3];
+        Image[] presetBtnImgs = new Image[6];
+        TextMeshProUGUI[] presetBtnTexts = new TextMeshProUGUI[6];
+
+        GameObject modeRow = null;
+        GameObject presetRow = null;
+        Slider timeSlider = null;
+        Slider incSlider = null;
+        System.Action RefreshPopupUI = null;
+        Button toggleBtn = null;
+        Button cancelBtn = null;
+        Button saveBtn = null;
+
+        // PREFAB-BASED POPUP
+        if (clockSettingsPrefab != null)
+        {
+            settingsPanelInstance = Instantiate(clockSettingsPrefab, canvas.transform, false);
+            Transform root = settingsPanelInstance.transform;
+
+            toggleBtn = FindChildComponent<Button>(root, "DialogPanel/EnableRow/ToggleBtn");
+            enableClockBtnImg = FindChildComponent<Image>(root, "DialogPanel/EnableRow/ToggleBtn");
+            enableClockBtnText = FindChildComponent<TextMeshProUGUI>(root, "DialogPanel/EnableRow/ToggleBtn/Text");
+
+            modeRow = root.Find("DialogPanel/ModeRow")?.gameObject;
+            for (int i = 0; i < 3; i++)
+            {
+                modeBtnImgs[i] = FindChildComponent<Image>(root, $"DialogPanel/ModeRow/ModeBtn_{i}");
+                modeBtnTexts[i] = FindChildComponent<TextMeshProUGUI>(root, $"DialogPanel/ModeRow/ModeBtn_{i}/Text");
+            }
+
+            presetRow = root.Find("DialogPanel/PresetRow")?.gameObject;
+            for (int i = 0; i < 6; i++)
+            {
+                presetBtnImgs[i] = FindChildComponent<Image>(root, $"DialogPanel/PresetRow/PresetBtn_{i}");
+                presetBtnTexts[i] = FindChildComponent<TextMeshProUGUI>(root, $"DialogPanel/PresetRow/PresetBtn_{i}/Text");
+            }
+
+            customTimeContainer = root.Find("DialogPanel/CustomTimeContainer")?.gameObject;
+            timeSlider = FindChildComponent<Slider>(root, "DialogPanel/CustomTimeContainer/Slider");
+            customTimeValText = FindChildComponent<TextMeshProUGUI>(root, "DialogPanel/CustomTimeContainer/Value");
+
+            incContainer = root.Find("DialogPanel/IncContainer")?.gameObject;
+            incSlider = FindChildComponent<Slider>(root, "DialogPanel/IncContainer/SliderInc");
+            incValText = FindChildComponent<TextMeshProUGUI>(root, "DialogPanel/IncContainer/Value");
+
+            cancelBtn = FindChildComponent<Button>(root, "DialogPanel/ActionsRow/CancelBtn");
+            saveBtn = FindChildComponent<Button>(root, "DialogPanel/ActionsRow/SaveBtn");
+
+            if (timeSlider != null)
+            {
+                timeSlider.minValue = 1;
+                timeSlider.maxValue = 120;
+                timeSlider.wholeNumbers = true;
+                timeSlider.value = Mathf.Max(1f, Mathf.Round(tempBaseTime / 60f));
+            }
+            if (incSlider != null)
+            {
+                incSlider.minValue = 0;
+                incSlider.maxValue = 60;
+                incSlider.wholeNumbers = true;
+                incSlider.value = tempInc;
+            }
+
+            RefreshPopupUI = () =>
+            {
+                if (enableClockBtnImg != null)
+                {
+                    if (tempEnabled)
+                    {
+                        enableClockBtnImg.color = new Color(0.2f, 0.6f, 0.35f, 1f);
+                        if (enableClockBtnText != null)
+                        {
+                            enableClockBtnText.text = "ENABLED";
+                            enableClockBtnText.color = Color.white;
+                        }
+                    }
+                    else
+                    {
+                        enableClockBtnImg.color = new Color(0.35f, 0.35f, 0.4f, 1f);
+                        if (enableClockBtnText != null)
+                        {
+                            enableClockBtnText.text = "DISABLED";
+                            enableClockBtnText.color = new Color(0.8f, 0.8f, 0.8f);
+                        }
+                    }
+                }
+
+                bool sectionsInteractable = tempEnabled;
+                if (modeRow != null) modeRow.SetActive(sectionsInteractable);
+                if (presetRow != null) presetRow.SetActive(sectionsInteractable);
+                if (customTimeContainer != null) customTimeContainer.SetActive(sectionsInteractable && selectedPresetIndex == 5);
+                if (incContainer != null) incContainer.SetActive(sectionsInteractable && tempMode != ClockMode.SuddenDeath);
+
+                for (int i = 0; i < 3; i++)
+                {
+                    if (modeBtnImgs[i] != null)
+                    {
+                        if (i == (int)tempMode)
+                        {
+                            modeBtnImgs[i].color = new Color(0.2f, 0.55f, 0.8f, 1f);
+                            if (modeBtnTexts[i] != null) modeBtnTexts[i].color = Color.white;
+                        }
+                        else
+                        {
+                            modeBtnImgs[i].color = new Color(0.18f, 0.18f, 0.22f, 1f);
+                            if (modeBtnTexts[i] != null) modeBtnTexts[i].color = new Color(0.7f, 0.7f, 0.7f);
+                        }
+                    }
+                }
+
+                for (int i = 0; i < 6; i++)
+                {
+                    if (presetBtnImgs[i] != null)
+                    {
+                        if (i == selectedPresetIndex)
+                        {
+                            presetBtnImgs[i].color = new Color(0.2f, 0.55f, 0.8f, 1f);
+                            if (presetBtnTexts[i] != null) presetBtnTexts[i].color = Color.white;
+                        }
+                        else
+                        {
+                            presetBtnImgs[i].color = new Color(0.18f, 0.18f, 0.22f, 1f);
+                            if (presetBtnTexts[i] != null) presetBtnTexts[i].color = new Color(0.7f, 0.7f, 0.7f);
+                        }
+                    }
+                }
+
+                if (customTimeValText != null && timeSlider != null)
+                    customTimeValText.text = $"{timeSlider.value} Min";
+                if (incValText != null && incSlider != null)
+                    incValText.text = $"{incSlider.value} Sec";
+            };
+
+            if (toggleBtn != null)
+            {
+                toggleBtn.onClick.RemoveAllListeners();
+                toggleBtn.onClick.AddListener(() =>
+                {
+                    tempEnabled = !tempEnabled;
+                    RefreshPopupUI();
+                });
+            }
+
+            for (int i = 0; i < 3; i++)
+            {
+                int idx = i;
+                if (modeBtnImgs[i] != null)
+                {
+                    Button btn = modeBtnImgs[i].GetComponent<Button>();
+                    if (btn != null)
+                    {
+                        btn.onClick.RemoveAllListeners();
+                        btn.onClick.AddListener(() =>
+                        {
+                            tempMode = (ClockMode)idx;
+                            RefreshPopupUI();
+                        });
+                    }
+                }
+            }
+
+            for (int i = 0; i < 6; i++)
+            {
+                int idx = i;
+                if (presetBtnImgs[i] != null)
+                {
+                    Button btn = presetBtnImgs[i].GetComponent<Button>();
+                    if (btn != null)
+                    {
+                        btn.onClick.RemoveAllListeners();
+                        btn.onClick.AddListener(() =>
+                        {
+                            selectedPresetIndex = idx;
+                            if (idx < 5 && timeSlider != null)
+                            {
+                                tempBaseTime = presetSeconds[idx];
+                                timeSlider.value = tempBaseTime / 60f;
+                            }
+                            RefreshPopupUI();
+                        });
+                    }
+                }
+            }
+
+            if (timeSlider != null)
+            {
+                timeSlider.onValueChanged.RemoveAllListeners();
+                timeSlider.onValueChanged.AddListener((val) =>
+                {
+                    if (selectedPresetIndex == 5)
+                    {
+                        tempBaseTime = val * 60f;
+                    }
+                    RefreshPopupUI();
+                });
+            }
+
+            if (incSlider != null)
+            {
+                incSlider.onValueChanged.RemoveAllListeners();
+                incSlider.onValueChanged.AddListener((val) =>
+                {
+                    tempInc = val;
+                    RefreshPopupUI();
+                });
+            }
+
+            if (cancelBtn != null)
+            {
+                cancelBtn.onClick.RemoveAllListeners();
+                cancelBtn.onClick.AddListener(() =>
+                {
+                    Destroy(settingsPanelInstance);
+                    settingsPanelInstance = null;
+                });
+            }
+
+            if (saveBtn != null)
+            {
+                saveBtn.onClick.RemoveAllListeners();
+                saveBtn.onClick.AddListener(() =>
+                {
+                    SaveSettings(tempEnabled, tempMode, tempBaseTime, tempInc);
+                    Destroy(settingsPanelInstance);
+                    settingsPanelInstance = null;
+                });
+            }
+
+            RefreshPopupUI();
+            return;
+        }
+
+        // PROCEDURAL FALLBACK
         TMP_FontAsset font = GetDefaultFont();
 
         // 1. Overlay Mask
@@ -1663,15 +1932,13 @@ public class ChessClock : MonoBehaviour
         titleTxt.alignment = TextAlignmentOptions.Center;
         titleTxt.color = Color.white;
 
-        // Local state copies
-        bool tempEnabled = isClockEnabled;
-        ClockMode tempMode = clockMode;
-        float tempBaseTime = baseTimeSeconds;
-        float tempInc = incrementSeconds;
+        // Reuse local state copies and UI references
+        tempEnabled = isClockEnabled;
+        tempMode = clockMode;
+        tempBaseTime = baseTimeSeconds;
+        tempInc = incrementSeconds;
 
-        // Preset state: 1m, 3m, 5m, 10m, 30m, custom
-        int selectedPresetIndex = -1;
-        float[] presetSeconds = { 60f, 180f, 300f, 600f, 1800f };
+        selectedPresetIndex = -1;
         for (int i = 0; i < presetSeconds.Length; i++)
         {
             if (Mathf.Approximately(tempBaseTime, presetSeconds[i]))
@@ -1679,18 +1946,17 @@ public class ChessClock : MonoBehaviour
         }
         if (selectedPresetIndex == -1) selectedPresetIndex = 5; // Custom
 
-        // UI references for interactive updates
-        GameObject customTimeContainer = null;
-        GameObject incContainer = null;
-        TextMeshProUGUI customTimeValText = null;
-        TextMeshProUGUI incValText = null;
-        Image enableClockBtnImg = null;
-        TextMeshProUGUI enableClockBtnText = null;
+        customTimeContainer = null;
+        incContainer = null;
+        customTimeValText = null;
+        incValText = null;
+        enableClockBtnImg = null;
+        enableClockBtnText = null;
 
-        Image[] modeBtnImgs = new Image[3];
-        TextMeshProUGUI[] modeBtnTexts = new TextMeshProUGUI[3];
-        Image[] presetBtnImgs = new Image[6];
-        TextMeshProUGUI[] presetBtnTexts = new TextMeshProUGUI[6];
+        modeBtnImgs = new Image[3];
+        modeBtnTexts = new TextMeshProUGUI[3];
+        presetBtnImgs = new Image[6];
+        presetBtnTexts = new TextMeshProUGUI[6];
 
         // --- SECTION 1: ENABLE CLOCK TOGGLE ---
         GameObject enableRow = new GameObject("EnableRow", typeof(RectTransform));
@@ -1737,7 +2003,7 @@ public class ChessClock : MonoBehaviour
         enableClockBtnText.fontStyle = FontStyles.Bold;
 
         // --- SECTION 2: MODE SELECT ROW ---
-        GameObject modeRow = new GameObject("ModeRow", typeof(RectTransform));
+        modeRow = new GameObject("ModeRow", typeof(RectTransform));
         modeRow.transform.SetParent(panel.transform, false);
         RectTransform modeRowRt = modeRow.GetComponent<RectTransform>();
         modeRowRt.anchorMin = new Vector2(0, 1);
@@ -1790,7 +2056,7 @@ public class ChessClock : MonoBehaviour
         }
 
         // --- SECTION 3: TIME PRESETS ROW ---
-        GameObject presetRow = new GameObject("PresetRow", typeof(RectTransform));
+        presetRow = new GameObject("PresetRow", typeof(RectTransform));
         presetRow.transform.SetParent(panel.transform, false);
         RectTransform presetRowRt = presetRow.GetComponent<RectTransform>();
         presetRowRt.anchorMin = new Vector2(0, 1);
@@ -1890,7 +2156,7 @@ public class ChessClock : MonoBehaviour
         sliderTimeRt.sizeDelta = new Vector2(-20, 20);
         sliderTimeRt.anchoredPosition = new Vector2(0, 5);
 
-        Slider timeSlider = sliderTimeGo.GetComponent<Slider>();
+        timeSlider = sliderTimeGo.GetComponent<Slider>();
         timeSlider.minValue = 1;
         timeSlider.maxValue = 120;
         timeSlider.wholeNumbers = true;
@@ -1983,7 +2249,7 @@ public class ChessClock : MonoBehaviour
         sliderIncRt.sizeDelta = new Vector2(-20, 20);
         sliderIncRt.anchoredPosition = new Vector2(0, 5);
 
-        Slider incSlider = sliderIncGo.GetComponent<Slider>();
+        incSlider = sliderIncGo.GetComponent<Slider>();
         incSlider.minValue = 0;
         incSlider.maxValue = 60;
         incSlider.wholeNumbers = true;
@@ -2094,7 +2360,7 @@ public class ChessClock : MonoBehaviour
         saveTxt.color = Color.white;
 
         // Reactive refresh handler for dynamic UI state updates
-        System.Action RefreshPopupUI = () =>
+        RefreshPopupUI = () =>
         {
             // 1. Enable Button update
             if (tempEnabled)

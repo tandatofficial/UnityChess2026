@@ -375,19 +375,17 @@ public class GameManager : MonoBehaviour
             {
                 pieceBoard[row, rookStartCol] = null;
                 pieceBoard[row, rookTargetCol] = rook;
-                rook.transform.position = BoardManager.Instance.GetWorldPosition(row, rookTargetCol);
+                rook.StartMoveAnimation(BoardManager.Instance.GetWorldPosition(row, rookTargetCol), 0.4f);
                 rook.currentCol = rookTargetCol;
-                rook.UpdateOriginalPosition();
                 rook.hasMoved = true;
             }
         }
 
         pieceBoard[oldRow, oldCol] = null;
-        piece.transform.position = BoardManager.Instance.GetWorldPosition(row, col);
+        piece.StartMoveAnimation(BoardManager.Instance.GetWorldPosition(row, col), 0.4f);
         piece.currentRow = row;
         piece.currentCol = col;
         pieceBoard[row, col] = piece;
-        piece.UpdateOriginalPosition();
         piece.hasMoved = true;
     }
 
@@ -714,10 +712,12 @@ public class GameManager : MonoBehaviour
         if (lastMove.capturedPiece != null)
         {
             ChessPiece captured = lastMove.capturedPiece;
+            captured.EnableComponent();
             captured.transform.position = BoardManager.Instance.GetWorldPosition(lastMove.toRow, lastMove.toCol);
             captured.currentRow = lastMove.toRow;
             captured.currentCol = lastMove.toCol;
             pieceBoard[lastMove.toRow, lastMove.toCol] = captured;
+            captured.UpdateOriginalPosition();
             
             captured.SetColliderEnabled(true);
             captured.gameObject.SetActive(true); 

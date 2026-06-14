@@ -1,4 +1,4 @@
-﻿using UnityEngine;
+using UnityEngine;
 using UnityEngine.EventSystems;
 
 public enum PieceType { Pawn, Rook, Knight, Bishop, Queen, King }
@@ -23,6 +23,7 @@ public class ChessPiece : MonoBehaviour
     private Vector3 targetPosition;
     private float liftHeight = 0.3f;
     private float moveSpeed = 5f;
+    private bool isAnimatingMovement = false;
 
     public bool hasMoved = false;
 
@@ -55,7 +56,60 @@ public class ChessPiece : MonoBehaviour
 
     private void Update()
     {
-        transform.position = Vector3.Lerp(transform.position, targetPosition, Time.deltaTime * moveSpeed);
+        if (!isAnimatingMovement)
+        {
+            transform.position = Vector3.Lerp(transform.position, targetPosition, Time.deltaTime * moveSpeed);
+        }
+    }
+
+    public void SetTargetPosition(Vector3 newPos)
+    {
+        originalPosition = newPos;
+        targetPosition = newPos;
+    }
+
+    public void StartMoveAnimation(Vector3 targetSquarePos, float duration)
+    {
+        StartCoroutine(MoveToSquareCoroutine(targetSquarePos, duration));
+    }
+
+    private System.Collections.IEnumerator MoveToSquareCoroutine(Vector3 targetSquarePos, float duration)
+    {
+        isAnimatingMovement = true;
+        Vector3 startPos = transform.position;
+        float elapsed = 0f;
+
+        while (elapsed < duration)
+        {
+            elapsed += Time.deltaTime;
+            float t = Mathf.Clamp01(elapsed / duration);
+            
+            // Smooth transition step
+            float tSmooth = t * t * (3f - 2f * t);
+            
+            // Parabolic path
+            Vector3 currentPos = Vector3.Lerp(startPos, targetSquarePos, tSmooth);
+            float arcHeight = 0.5f;
+            currentPos.y += Mathf.Sin(t * Mathf.PI) * arcHeight;
+            
+            transform.position = currentPos;
+            yield return null;
+        }
+
+        transform.position = targetSquarePos;
+        originalPosition = targetSquarePos;
+        targetPosition = targetSquarePos;
+        isAnimatingMovement = false;
+    }
+
+    public void DisableComponent()
+    {
+        this.enabled = false;
+    }
+
+    public void EnableComponent()
+    {
+        this.enabled = true;
     }
 
     public void Highlight(bool isSelected, bool isUnderAttack = false)
