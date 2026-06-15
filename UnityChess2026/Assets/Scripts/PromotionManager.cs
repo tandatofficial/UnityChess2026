@@ -1,4 +1,4 @@
-﻿using UnityEngine;
+using UnityEngine;
 
 public class PromotionManager : MonoBehaviour
 {
@@ -64,12 +64,28 @@ public class PromotionManager : MonoBehaviour
         }
     }
 
+    public void StartPromotionFromNetwork(ChessPiece pawn, PieceType newType)
+    {
+        promotingPawn = pawn;
+        PromoteTo(newType);
+    }
+
     public void PromoteTo(PieceType newType)
     {
         if (promotingPawn == null)
         {
             Debug.LogWarning("No pawn selected for promotion.");
             return;
+        }
+
+        // Send network move if playing online and we have a pending move
+        if (GameManager.Instance != null && GameManager.Instance.currentGameMode == GameMode.Online)
+        {
+            if (!string.IsNullOrEmpty(GameManager.Instance.pendingNetworkMove))
+            {
+                GameManager.Instance.SendNetworkMove($"{GameManager.Instance.pendingNetworkMove}={newType}");
+                GameManager.Instance.pendingNetworkMove = "";
+            }
         }
 
         int row = promotingPawn.currentRow;

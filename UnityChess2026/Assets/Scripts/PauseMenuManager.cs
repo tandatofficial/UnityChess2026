@@ -411,6 +411,15 @@ public class PauseMenuManager : MonoBehaviour
     {
         Time.timeScale = 1f;
 
+        // If in an online game, cleanly disconnect before switching scenes
+        if (GameManager.Instance != null && GameManager.Instance.currentGameMode == GameMode.Online)
+        {
+            if (SocketManager.Instance != null)
+            {
+                SocketManager.Instance.Disconnect();
+            }
+        }
+
         if (currentConfirmAction == ConfirmAction.QuitGame)
         {
             Debug.Log("Quitting game...");

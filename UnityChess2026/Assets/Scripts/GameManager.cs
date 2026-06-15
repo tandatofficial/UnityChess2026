@@ -4,7 +4,16 @@ using UnityEngine;
 
 public class GameManager : MonoBehaviour
 {
-    public static GameManager Instance;
+    public static GameManager Instance { get; private set; }
+
+    public static GameManager Get()
+    {
+        if (Instance != null)
+            return Instance;
+
+        Instance = FindFirstObjectByType<GameManager>();
+        return Instance;
+    }
 
     public ChessPiece[,] pieceBoard = new ChessPiece[8, 8];
     public ChessPiece selectedPiece;
@@ -12,6 +21,11 @@ public class GameManager : MonoBehaviour
 
     private readonly List<Square> highlightedSquares = new();
     private readonly List<IKingCheckObserver> checkObservers = new();
+
+    public GameMode currentGameMode = GameMode.Local;
+    public bool isGameOver = false;
+    public bool isPausedForReconnect = false;
+    public string pendingNetworkMove = null;
 
     private bool isMoving = false;
     private ChessPiece lastCheckedKing = null;
@@ -23,19 +37,62 @@ public class GameManager : MonoBehaviour
     {
         if (Instance != null && Instance != this)
         {
-            Destroy(Instance.gameObject);
+            Destroy(gameObject);
+            return;
         }
 
         Instance = this;
         ResetRuntimeState();
     }
 
+    private void OnEnable()
+    {
+        if (Instance == null)
+            Instance = this;
+    }
+
     private void OnDestroy()
     {
         if (Instance == this)
-        {
             Instance = null;
+    }
+
+    /// <summary>
+    /// Reset the board for a new online match without reloading the scene.
+    /// Keeps GameManager alive so square/piece clicks keep working.
+    /// </summary>
+    public void PrepareForOnlineGame()
+    {
+        isGameOver = false;
+        isPausedForReconnect = false;
+        pendingNetworkMove = null;
+        isMoving = false;
+        Time.timeScale = 1f;
+
+        DeselectPiece();
+        if (HintManager.Instance != null)
+            HintManager.Instance.ClearHint();
+
+        for (int r = 0; r < 8; r++)
+        {
+            for (int c = 0; c < 8; c++)
+            {
+                if (pieceBoard[r, c] != null)
+                {
+                    Destroy(pieceBoard[r, c].gameObject);
+                    pieceBoard[r, c] = null;
+                }
+            }
         }
+
+        moveHistory.Clear();
+        currentTurn = PieceColor.White;
+        currentGameMode = GameMode.Online;
+
+        if (PieceSpawner.Instance != null)
+            PieceSpawner.Instance.SpawnAllPieces();
+
+        UpdatePieceColliders();
     }
 
     private void ResetRuntimeState()
@@ -57,9 +114,18 @@ public class GameManager : MonoBehaviour
         {
             if (piece == null) continue;
 
-            bool isControllable = !SocketManager.Instance.isSpectator &&
-                                  piece.color == SocketManager.Instance.assignedColor &&
-                                  currentTurn == SocketManager.Instance.assignedColor;
+            bool isControllable = false;
+            
+            if (currentGameMode == GameMode.Online && SocketManager.Instance != null)
+            {
+                isControllable = !SocketManager.Instance.isSpectator &&
+                                 piece.color == SocketManager.Instance.assignedColor &&
+                                 currentTurn == SocketManager.Instance.assignedColor;
+            }
+            else
+            {
+                isControllable = (piece.color == currentTurn);
+            }
 
             piece.SetColliderEnabled(isControllable);
         }
@@ -100,8 +166,19 @@ public class GameManager : MonoBehaviour
         // Không có quân cờ được chọn
         if (selectedPiece == null) return;
 
-        // Không phải lượt của người chơi
-        // if (currentTurn != SocketManager.Instance.assignedColor) return;
+        if (currentGameMode == GameMode.Online
+            && SocketManager.Instance != null
+            && isPausedForReconnect)
+        {
+            return;
+        }
+
+        if (currentGameMode == GameMode.Online
+            && SocketManager.Instance != null
+            && currentTurn != SocketManager.Instance.assignedColor)
+        {
+            return;
+        }
 
         // ✅ Lưu thông tin quân cờ trước khi di chuyển
         int fromRow = selectedPiece.currentRow;
@@ -142,7 +219,10 @@ public class GameManager : MonoBehaviour
             AudioManager.Instance.PlayMoveSound();
 
         // ✅ Gửi nước đi tới server
-        // SocketManager.Instance.SendMove($"{fromRow},{fromCol}->{row},{col}");
+        if (currentGameMode == GameMode.Online)
+        {
+            SendNetworkMove($"{fromRow},{fromCol}->{row},{col}");
+        }
 
         // ✅ Log ra console
         Debug.Log($"♟️ {movingColor} {movingType} moved from {fromRow},{fromCol} to {row},{col}");
@@ -244,7 +324,9 @@ public class GameManager : MonoBehaviour
             return;
         }
 
-        StartCoroutine(SwitchTurnWithCamera());
+        currentTurn = opponent;
+        Debug.Log($"[GameManager] Network move applied. Turn is now {currentTurn}");
+        UpdatePieceColliders();
     }
 
     public void EndGame(PieceColor winner)
@@ -278,6 +360,31 @@ public class GameManager : MonoBehaviour
 
         if (UIManager.Instance != null)
             UIManager.Instance.ShowDrawScreen(reason); 
+    }
+
+    public void HandleNetworkGameOver(string winner, string reason)
+    {
+        isGameOver = true;
+        isPausedForReconnect = false;
+
+        if (winner == "draw")
+        {
+            EndDraw(reason);
+            return;
+        }
+
+        PieceColor winnerColor = winner == "white" ? PieceColor.White : PieceColor.Black;
+        EndGame(winnerColor);
+
+        if (UIManager.Instance != null && UIManager.Instance.gameOverText != null)
+        {
+            string winnerName = winner == "white" ? "Trắng" : "Đen";
+            string displayReason = reason;
+            if (reason.Contains("disconnected")) displayReason = "Đối thủ mất kết nối";
+            else if (reason.Contains("resigned")) displayReason = "Đối thủ xin thua";
+            else if (reason.Contains("checkmate")) displayReason = "Chiếu hết";
+            UIManager.Instance.gameOverText.text = $"{winnerName} Thắng!\n{displayReason}";
+        }
     }
 
 
@@ -581,7 +688,7 @@ public class GameManager : MonoBehaviour
         isMoving = false;
 
         // --- GỌI SIÊU TRÍ TUỆ STOCKFISH VỚI 3 MỨC ĐỘ KHÓ ---
-        if (currentTurn == PieceColor.Black)
+        if (currentGameMode == GameMode.AI && currentTurn == PieceColor.Black)
         {
             string history = GetBoardFEN();
             if (StockfishManager.Instance != null)
@@ -796,4 +903,97 @@ public class GameManager : MonoBehaviour
         }
         return (piece.color == PieceColor.White) ? char.ToUpper(c) : c;
     }
+
+    public string GetBoardStateJson()
+    {
+        List<PieceData> pieceDataList = new List<PieceData>();
+        for (int r = 0; r < 8; r++)
+        {
+            for (int c = 0; c < 8; c++)
+            {
+                if (pieceBoard[r, c] != null)
+                {
+                    pieceDataList.Add(new PieceData
+                    {
+                        r = r,
+                        c = c,
+                        type = pieceBoard[r, c].type,
+                        color = pieceBoard[r, c].color
+                    });
+                }
+            }
+        }
+        return JsonUtility.ToJson(new BoardStateData { pieces = pieceDataList, turn = currentTurn });
+    }
+
+    public void LoadBoardState(string stateJson)
+    {
+        if (string.IsNullOrEmpty(stateJson)) return;
+
+        BoardStateData state = JsonUtility.FromJson<BoardStateData>(stateJson);
+        if (state == null || state.pieces == null) return;
+
+        // Xóa hết quân cờ hiện tại
+        for (int r = 0; r < 8; r++)
+        {
+            for (int c = 0; c < 8; c++)
+            {
+                if (pieceBoard[r, c] != null)
+                {
+                    Destroy(pieceBoard[r, c].gameObject);
+                    pieceBoard[r, c] = null;
+                }
+            }
+        }
+
+        // Tạo lại quân cờ
+        foreach (var p in state.pieces)
+        {
+            GameObject prefab = PieceSpawner.Instance.GetPrefab(p.color, p.type);
+            if (prefab != null)
+            {
+                Vector3 pos = BoardManager.Instance.GetWorldPosition(p.r, p.c);
+                Transform parent = p.color == PieceColor.White ? PieceSpawner.Instance.whitePieces.transform : PieceSpawner.Instance.blackPieces.transform;
+                ChessPiece piece = new ChessPieceBuilder()
+                    .Create(prefab, pos, prefab.transform.rotation, parent)
+                    .SetInfo(p.r, p.c, p.color, p.type)
+                    .AddSelector()
+                    .Build();
+                pieceBoard[p.r, p.c] = piece;
+            }
+        }
+
+        currentTurn = state.turn;
+        UpdatePieceColliders();
+    }
+
+    public void SendNetworkMove(string moveString)
+    {
+        string stateJson = GetBoardStateJson();
+        string networkData = JsonUtility.ToJson(new NetworkMoveData { move = moveString, boardState = stateJson });
+        SocketManager.Instance.SendMove(networkData);
+    }
+}
+
+[System.Serializable]
+public class NetworkMoveData
+{
+    public string move;
+    public string boardState;
+}
+
+[System.Serializable]
+public class BoardStateData
+{
+    public List<PieceData> pieces;
+    public PieceColor turn;
+}
+
+[System.Serializable]
+public class PieceData
+{
+    public int r;
+    public int c;
+    public PieceType type;
+    public PieceColor color;
 }

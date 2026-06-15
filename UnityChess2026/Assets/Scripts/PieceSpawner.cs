@@ -1,4 +1,4 @@
-﻿using UnityEngine;
+using UnityEngine;
 
 public class PieceSpawner : MonoBehaviour
 {
@@ -81,6 +81,35 @@ public class PieceSpawner : MonoBehaviour
             .Build();
 
         GameManager.Instance.pieceBoard[row, col] = piece;
+    }
+
+    public GameObject GetPrefab(PieceColor color, PieceType type)
+    {
+        if (color == PieceColor.White)
+        {
+            switch (type)
+            {
+                case PieceType.Pawn: return whitePawnPrefab;
+                case PieceType.Rook: return whiteRookPrefab;
+                case PieceType.Knight: return whiteKnightPrefab;
+                case PieceType.Bishop: return whiteBishopPrefab;
+                case PieceType.Queen: return whiteQueenPrefab;
+                case PieceType.King: return whiteKingPrefab;
+            }
+        }
+        else
+        {
+            switch (type)
+            {
+                case PieceType.Pawn: return blackPawnPrefab;
+                case PieceType.Rook: return blackRookPrefab;
+                case PieceType.Knight: return blackKnightPrefab;
+                case PieceType.Bishop: return blackBishopPrefab;
+                case PieceType.Queen: return blackQueenPrefab;
+                case PieceType.King: return blackKingPrefab;
+            }
+        }
+        return null;
     }
 
 }
