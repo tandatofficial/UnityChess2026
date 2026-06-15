@@ -237,29 +237,55 @@ public class ChessClock : MonoBehaviour
         return null;
     }
 
+    private bool IsMatchActive()
+    {
+        if (UnityEngine.SceneManagement.SceneManager.GetActiveScene().name != "PvPOff")
+            return false;
+
+        GameManager gm = GameManager.Instance;
+        GameMenu menu = UnityEngine.Object.FindFirstObjectByType<GameMenu>();
+        if (gm == null || menu == null)
+            return false;
+
+        if (menu.titleMenuPanel != null && menu.titleMenuPanel.activeSelf) return false;
+        if (menu.menuPanel != null && menu.menuPanel.activeSelf) return false;
+        if (menu.settingsPanel != null && menu.settingsPanel.activeSelf) return false;
+
+        if (OnlineLobbyUI.Instance != null && OnlineLobbyUI.Instance.isLobbyActive)
+            return false;
+
+        if (GameObject.Find("OnlineLobbyPanel") != null || GameObject.Find("WaitingPanel") != null)
+            return false;
+
+        return true;
+    }
+
     private void Update()
     {
-        // Check game state transitions
-        bool isPlaying = GameManager.Instance != null && Time.timeScale > 0f;
-        
-        // Auto check if menu was closed to start clock
-        GameMenu gameMenu = FindObjectOfType<GameMenu>();
-        bool inMenu = gameMenu != null && 
-                      ((gameMenu.titleMenuPanel != null && gameMenu.titleMenuPanel.activeSelf) ||
-                       (gameMenu.menuPanel != null && gameMenu.menuPanel.activeSelf) ||
-                       (gameMenu.settingsPanel != null && gameMenu.settingsPanel.activeSelf));
+        bool isMatchActive = IsMatchActive();
 
-        if (!inMenu && isClockEnabled && isPlaying)
+        if (isMatchActive && isClockEnabled)
         {
-            // Recreate HUD on scene load/reset when hudContainer is null
-            if (!isClockRunning || hudContainer == null)
+            bool shouldRunClock = Time.timeScale > 0f;
+
+            if (shouldRunClock)
             {
-                StartClock();
+                if (!isClockRunning || hudContainer == null)
+                {
+                    StartClock();
+                }
+            }
+            else
+            {
+                if (isClockRunning)
+                {
+                    isClockRunning = false;
+                }
             }
         }
         else
         {
-            if (isClockRunning && (inMenu || !isPlaying))
+            if (isClockRunning)
             {
                 isClockRunning = false;
             }
@@ -339,7 +365,7 @@ public class ChessClock : MonoBehaviour
         // Manage HUD display visibility
         if (hudContainer != null)
         {
-            hudContainer.SetActive(isClockEnabled && !inMenu);
+            hudContainer.SetActive(isClockEnabled && isMatchActive);
         }
     }
 
