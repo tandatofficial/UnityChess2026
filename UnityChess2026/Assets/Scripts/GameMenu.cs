@@ -140,6 +140,14 @@ public class GameMenu : MonoBehaviour
             int savedDifficulty = PlayerPrefs.GetInt("Difficulty", 1);
             SelectDifficultyAndStart(savedDifficulty);
         }
+
+        // Auto open online lobby if flagged (multiplayer restart)
+        if (PlayerPrefs.GetInt("AutoOpenOnlineLobby", 0) == 1)
+        {
+            PlayerPrefs.DeleteKey("AutoOpenOnlineLobby");
+            PlayerPrefs.Save();
+            PlayOnline();
+        }
     }
 
     public void ShowDifficultyMenu()

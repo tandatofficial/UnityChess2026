@@ -62,12 +62,23 @@ public class UIManager : MonoBehaviour
     {
         Time.timeScale = 1f;
 
+        bool isOnline = GameManager.Instance != null && GameManager.Instance.currentGameMode == GameMode.Online;
+
         if (SocketManager.Instance != null && SocketManager.Instance.IsConnected)
         {
             SocketManager.Instance.Disconnect();
         }
 
-        PlayerPrefs.SetInt("AutoStartGame", 1);
+        if (isOnline)
+        {
+            PlayerPrefs.SetInt("AutoOpenOnlineLobby", 1);
+            PlayerPrefs.DeleteKey("AutoStartGame");
+        }
+        else
+        {
+            PlayerPrefs.SetInt("AutoStartGame", 1);
+            PlayerPrefs.DeleteKey("AutoOpenOnlineLobby");
+        }
         PlayerPrefs.Save();
 
         SceneManager.LoadScene(SceneManager.GetActiveScene().buildIndex);
