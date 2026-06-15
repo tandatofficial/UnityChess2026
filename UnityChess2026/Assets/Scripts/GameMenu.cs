@@ -40,6 +40,7 @@ public class GameMenu : MonoBehaviour
     private void Start()
     {
         AutoPopulateEasyModeUI();
+        StartCoroutine(InjectPlayOnlineButton());
 
         if (logoutButton == null)
         {
@@ -68,9 +69,11 @@ public class GameMenu : MonoBehaviour
             Debug.LogWarning("Logout button not found in scene and not assigned in Inspector.");
         }
 
+        bool isOnline = SocketManager.Instance != null && SocketManager.Instance.isOnlineMode;
+
         if (titleMenuPanel != null)
         {
-            titleMenuPanel.SetActive(true);
+            titleMenuPanel.SetActive(!isOnline);
         }
 
         if (menuPanel != null)
@@ -80,8 +83,8 @@ public class GameMenu : MonoBehaviour
 
         if (logoImage != null)
         {
-            logoImage.SetActive(true);
-            BringLogoToFront();
+            logoImage.SetActive(!isOnline);
+            if (!isOnline) BringLogoToFront();
         }
 
         if (backButtonLayer != null)
@@ -101,7 +104,7 @@ public class GameMenu : MonoBehaviour
 
         if (pauseButton != null)
         {
-            pauseButton.SetActive(false);
+            pauseButton.SetActive(isOnline);
         }
 
         if (logoutButton != null)
@@ -111,7 +114,16 @@ public class GameMenu : MonoBehaviour
 
         if (pauseMenuManager != null)
         {
-            pauseMenuManager.SetPauseInputEnabled(false);
+            pauseMenuManager.SetPauseInputEnabled(isOnline);
+        }
+
+        // Hide easy mode UI elements (hints/undo) if online
+        if (isOnline && easyModeOnlyUI != null)
+        {
+            foreach (GameObject uiElement in easyModeOnlyUI)
+            {
+                if (uiElement != null) uiElement.SetActive(false);
+            }
         }
 
         GameMenuUiSafety.PreparePanel(titleMenuPanel);
@@ -301,12 +313,46 @@ public class GameMenu : MonoBehaviour
             }
         }
 
+        // Set game mode to AI (offline)
         if (GameManager.Instance != null)
         {
+            GameManager.Instance.currentGameMode = GameMode.AI;
             GameManager.Instance.UpdatePieceColliders();
         }
 
         GameMenuUiSafety.RestoreFullScreenBlockers();
+    }
+
+    /// <summary>
+    /// Called when "Play Online" is clicked. Opens the Online Lobby UI.
+    /// </summary>
+    public void PlayOnline()
+    {
+        ClearUiSelection();
+
+        // Hide all menus
+        if (titleMenuPanel != null) titleMenuPanel.SetActive(false);
+        if (menuPanel != null) menuPanel.SetActive(false);
+        if (logoImage != null) logoImage.SetActive(false);
+        if (backButtonLayer != null) backButtonLayer.SetActive(false);
+        if (settingsPanel != null) settingsPanel.SetActive(false);
+        if (logoutButton != null) logoutButton.SetActive(false);
+
+        // Ensure SocketManager exists
+        if (SocketManager.Instance == null)
+        {
+            GameObject smGo = new GameObject("SocketManager");
+            smGo.AddComponent<SocketManager>();
+        }
+
+        // Ensure OnlineLobbyUI exists
+        if (OnlineLobbyUI.Instance == null)
+        {
+            GameObject lobbyGo = new GameObject("OnlineLobbyUI");
+            lobbyGo.AddComponent<OnlineLobbyUI>();
+        }
+
+        OnlineLobbyUI.Instance.ShowLobby();
     }
 
     private void PlaceLogoutButtonWithMenu()
@@ -396,5 +442,86 @@ public class GameMenu : MonoBehaviour
         {
             EventSystem.current.SetSelectedGameObject(null);
         }
+    }
+
+    /// <summary>
+    /// Injects a "PLAY ONLINE" button into the Title Menu panel dynamically.
+    /// </summary>
+    private System.Collections.IEnumerator InjectPlayOnlineButton()
+    {
+        yield return new WaitForSeconds(0.3f);
+
+        if (titleMenuPanel == null) yield break;
+
+        // Check if already injected
+        if (titleMenuPanel.transform.Find("Btn_PlayOnline") != null) yield break;
+
+        // Find a reference button to clone
+        Button refButton = titleMenuPanel.GetComponentInChildren<Button>(true);
+        if (refButton == null) yield break;
+
+        // Clone the reference button
+        GameObject onlineBtnGo = Instantiate(refButton.gameObject, titleMenuPanel.transform);
+        onlineBtnGo.name = "Btn_PlayOnline";
+
+        // Fix scale & position
+        RectTransform rt = onlineBtnGo.GetComponent<RectTransform>();
+        if (rt != null)
+        {
+            rt.localScale = Vector3.one;
+            rt.anchoredPosition3D = new Vector3(rt.anchoredPosition.x, rt.anchoredPosition.y, 0f);
+        }
+
+        // Replace Button component to clear old listeners
+        Button oldBtn = onlineBtnGo.GetComponent<Button>();
+        if (oldBtn != null)
+        {
+            ColorBlock colors = oldBtn.colors;
+            Navigation nav = oldBtn.navigation;
+            Graphic target = oldBtn.targetGraphic;
+            SpriteState sprites = oldBtn.spriteState;
+            Selectable.Transition trans = oldBtn.transition;
+
+            DestroyImmediate(oldBtn);
+
+            Button btn = onlineBtnGo.AddComponent<Button>();
+            btn.colors = colors;
+            btn.navigation = nav;
+            btn.targetGraphic = target;
+            btn.spriteState = sprites;
+            btn.transition = trans;
+
+            btn.onClick.AddListener(PlayOnline);
+        }
+
+        // Remove custom scripts that might interfere
+        MonoBehaviour[] scripts = onlineBtnGo.GetComponents<MonoBehaviour>();
+        foreach (MonoBehaviour script in scripts)
+        {
+            if (script != null &&
+                !(script is Button) &&
+                !(script is Image) &&
+                !(script is CanvasRenderer) &&
+                !(script is RectTransform) &&
+                !(script is LayoutElement))
+            {
+                DestroyImmediate(script);
+            }
+        }
+
+        // Change text
+        TextMeshProUGUI tmp = onlineBtnGo.GetComponentInChildren<TextMeshProUGUI>(true);
+        if (tmp != null)
+        {
+            tmp.text = "PLAY ONLINE";
+        }
+        else
+        {
+            Text legacyText = onlineBtnGo.GetComponentInChildren<Text>(true);
+            if (legacyText != null) legacyText.text = "PLAY ONLINE";
+        }
+
+        onlineBtnGo.SetActive(true);
+        Debug.Log("[GameMenu] Injected 'PLAY ONLINE' button into Title Menu.");
     }
 }

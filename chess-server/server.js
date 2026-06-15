@@ -378,11 +378,63 @@ const io = new Server(server, {
   }
 });
 
-// Socket.IO Events (from original server.js)
-let whitePlayer = null;
-let blackPlayer = null;
-let playerNames = {};
+// ----------------------------------------------------
+// Room-Based Multiplayer System
+// ----------------------------------------------------
 
+const rooms = new Map(); // roomId -> RoomState
+const playerRoomMap = new Map(); // playerId -> roomId
+
+function generateRoomId() {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  let id = '';
+  for (let i = 0; i < 6; i++) {
+    id += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+  return id;
+}
+
+function createRoomState(roomId) {
+  return {
+    roomId,
+    white: null,         // socket.id
+    black: null,         // socket.id
+    whitePlayerId: null, // UUID
+    blackPlayerId: null, // UUID
+    whiteName: null,
+    blackName: null,
+    status: 'waiting',   // waiting | playing | reconnecting | finished
+    moves: [],
+    currentTurn: 'white',
+    boardState: null,
+    reconnectTimer: null
+  };
+}
+
+function getPlayerRoom(playerId) {
+  const roomId = playerRoomMap.get(playerId);
+  if (roomId) return rooms.get(roomId);
+  return null;
+}
+
+function getOpponentId(room, playerId) {
+  if (room.whitePlayerId === playerId) return room.black;
+  if (room.blackPlayerId === playerId) return room.white;
+  return null;
+}
+
+function cleanupRoom(roomId) {
+  const room = rooms.get(roomId);
+  if (room) {
+    if (room.whitePlayerId) playerRoomMap.delete(room.whitePlayerId);
+    if (room.blackPlayerId) playerRoomMap.delete(room.blackPlayerId);
+    if (room.reconnectTimer) clearTimeout(room.reconnectTimer);
+    rooms.delete(roomId);
+    console.log(`🗑️ Room ${roomId} cleaned up. Active rooms: ${rooms.size}`);
+  }
+}
+
+// Socket.IO Authentication
 io.use((socket, next) => {
   if (socket.handshake.query.token === "UNITY") {
     next();
@@ -391,43 +443,275 @@ io.use((socket, next) => {
   }
 });
 
+// Socket.IO Connection Handler
 io.on("connection", (socket) => {
   const playerName = socket.handshake.query.name || "Unknown";
-  playerNames[socket.id] = playerName;
+  const playerId = socket.handshake.query.playerId;
+  console.log(`🔌 Connected: ${socket.id} (Player: ${playerId}, Name: ${playerName})`);
 
-  console.log(`🔌 New client connected: ${socket.id} (${playerName})`);
-
-  let assignedColor = null;
-  if (!whitePlayer) {
-    whitePlayer = socket.id;
-    assignedColor = "white";
-  } else if (!blackPlayer) {
-    blackPlayer = socket.id;
-    assignedColor = "black";
-  } else {
-    socket.emit("assignColor", "spectator");
-    console.log(`👀 Spectator connected: ${socket.id} (${playerName})`);
+  if (!playerId) {
+    socket.disconnect();
     return;
   }
 
-  socket.emit("assignColor", assignedColor);
-  console.log(`🎨 Assigned ${assignedColor} to ${socket.id} (${playerName})`);
+  // --- RECONNECTION LOGIC ---
+  const existingRoom = getPlayerRoom(playerId);
+  if (existingRoom && existingRoom.status !== 'finished') {
+    const isWhite = existingRoom.whitePlayerId === playerId;
+    if (isWhite) existingRoom.white = socket.id;
+    else existingRoom.black = socket.id;
 
-  socket.on("move", (data) => {
-    const name = playerNames[socket.id] || "Unknown";
-    console.log(`♟️ ${name} played move: ${data}`);
-    socket.broadcast.emit("move", data);
+    if (existingRoom.reconnectTimer) {
+      clearTimeout(existingRoom.reconnectTimer);
+      existingRoom.reconnectTimer = null;
+    }
+
+    if (existingRoom.status === 'reconnecting') {
+      existingRoom.status = 'playing';
+    }
+
+    socket.join(existingRoom.roomId);
+
+    const opponentSocketId = isWhite ? existingRoom.black : existingRoom.white;
+    if (opponentSocketId) {
+      io.to(opponentSocketId).emit("opponentReconnected", JSON.stringify({ message: "Opponent returned" }));
+    }
+
+    socket.emit("reconnectSuccess", JSON.stringify({
+      roomId: existingRoom.roomId,
+      color: isWhite ? "white" : "black",
+      boardState: existingRoom.boardState,
+      currentTurn: existingRoom.currentTurn
+    }));
+
+    console.log(`🔄 ${playerName} reconnected to room ${existingRoom.roomId}`);
+  }
+
+  // --- CREATE ROOM ---
+  socket.on("createRoom", (data) => {
+    // Ensure cleanup of any old room this player was in
+    const oldRoom = getPlayerRoom(playerId);
+    if (oldRoom) {
+      cleanupRoom(oldRoom.roomId);
+    }
+
+    let roomId = generateRoomId();
+    while (rooms.has(roomId)) {
+      roomId = generateRoomId();
+    }
+
+    const room = createRoomState(roomId);
+    room.white = socket.id;
+    room.whitePlayerId = playerId;
+    room.whiteName = playerName;
+    rooms.set(roomId, room);
+    playerRoomMap.set(playerId, roomId);
+
+    socket.join(roomId);
+    socket.emit("roomCreated", JSON.stringify({ roomId }));
+    console.log(`🏠 Room ${roomId} created by ${playerName} (white). Active rooms: ${rooms.size}`);
   });
 
+  // --- LEAVE ROOM ---
+  socket.on("leaveRoom", () => {
+    const room = getPlayerRoom(playerId);
+    if (!room) return;
+
+    if (room.status === 'playing') {
+      const isWhite = room.whitePlayerId === playerId;
+      const opponentSocketId = isWhite ? room.black : room.white;
+      
+      if (opponentSocketId) {
+        io.to(opponentSocketId).emit("gameOver", JSON.stringify({
+          winner: isWhite ? "black" : "white",
+          reason: `${playerName} left the room`,
+        }));
+      }
+    }
+    
+    cleanupRoom(room.roomId);
+  });
+
+  // --- JOIN ROOM ---
+  socket.on("joinRoom", (data) => {
+    let parsed;
+    try {
+      parsed = typeof data === 'string' ? JSON.parse(data) : data;
+    } catch (e) {
+      parsed = { roomId: data };
+    }
+
+    const roomId = parsed.roomId ? parsed.roomId.toUpperCase() : null;
+    const room = rooms.get(roomId);
+
+    if (!room) {
+      socket.emit("joinError", JSON.stringify({ error: "Room not found." }));
+      return;
+    }
+
+    if (room.status !== 'waiting') {
+      socket.emit("joinError", JSON.stringify({ error: "Room is already full or playing." }));
+      return;
+    }
+
+    if (room.whitePlayerId === playerId) {
+      socket.emit("joinError", JSON.stringify({ error: "You cannot join your own room." }));
+      return;
+    }
+
+    const oldRoom = getPlayerRoom(playerId);
+    if (oldRoom && oldRoom.roomId !== roomId) {
+       cleanupRoom(oldRoom.roomId);
+    }
+
+    room.black = socket.id;
+    room.blackPlayerId = playerId;
+    room.blackName = playerName;
+    room.status = 'playing';
+    playerRoomMap.set(playerId, roomId);
+
+    socket.join(roomId);
+
+    io.to(room.white).emit("gameStart", JSON.stringify({
+      roomId: room.roomId,
+      color: "white",
+      opponentName: room.blackName,
+    }));
+
+    io.to(room.black).emit("gameStart", JSON.stringify({
+      roomId: room.roomId,
+      color: "black",
+      opponentName: room.whiteName,
+    }));
+
+    console.log(`🎮 Game started in room ${roomId}: ${room.whiteName} vs ${room.blackName}`);
+  });
+
+  // --- MOVE ---
+  socket.on("move", (data) => {
+    const room = getPlayerRoom(playerId);
+    if (!room || room.status !== 'playing') {
+      return;
+    }
+
+    const isWhite = room.whitePlayerId === playerId;
+    const expectedTurn = isWhite ? 'white' : 'black';
+
+    if (room.currentTurn !== expectedTurn) return;
+
+    let parsed;
+    try {
+      parsed = typeof data === 'string' ? JSON.parse(data) : data;
+    } catch (e) {
+      parsed = { move: data };
+    }
+
+    const moveStr = parsed.move || data;
+    room.boardState = parsed.boardState || room.boardState;
+
+    room.moves.push({
+      player: expectedTurn,
+      move: moveStr,
+      timestamp: Date.now(),
+    });
+
+    room.currentTurn = room.currentTurn === 'white' ? 'black' : 'white';
+
+    const opponentSocketId = isWhite ? room.black : room.white;
+    io.to(opponentSocketId).emit("move", JSON.stringify({ move: moveStr }));
+    console.log(`♟️ [${room.roomId}] ${playerName} (${expectedTurn}): ${moveStr} | Turn -> ${room.currentTurn}`);
+  });
+
+  // --- GAME OVER ---
+  socket.on("gameOver", (data) => {
+    const room = getPlayerRoom(playerId);
+    if (!room || room.status !== 'playing') return;
+
+    let parsed;
+    try {
+      parsed = typeof data === 'string' ? JSON.parse(data) : data;
+    } catch (e) {
+      parsed = { winner: "unknown", reason: "unknown" };
+    }
+
+    room.status = 'finished';
+
+    io.to(room.roomId).emit("gameOver", JSON.stringify({
+      winner: parsed.winner || "unknown",
+      reason: parsed.reason || "unknown",
+    }));
+
+    console.log(`🏁 [${room.roomId}] Game over: ${parsed.reason} | Winner: ${parsed.winner}`);
+
+    setTimeout(() => cleanupRoom(room.roomId), 30000);
+  });
+
+  // --- RESIGN ---
+  socket.on("resign", () => {
+    const room = getPlayerRoom(playerId);
+    if (!room || room.status !== 'playing') return;
+
+    const isWhite = room.whitePlayerId === playerId;
+    const winner = isWhite ? "black" : "white";
+    const loserName = isWhite ? room.whiteName : room.blackName;
+
+    room.status = 'finished';
+
+    io.to(room.roomId).emit("gameOver", JSON.stringify({
+      winner,
+      reason: `${loserName} resigned`,
+    }));
+
+    console.log(`🏳️ [${room.roomId}] ${loserName} resigned. ${winner} wins!`);
+    setTimeout(() => cleanupRoom(room.roomId), 30000);
+  });
+
+  // --- DISCONNECT ---
   socket.on("disconnect", () => {
-    console.log(`❌ Disconnected: ${socket.id} (${playerNames[socket.id]})`);
-    if (socket.id === whitePlayer) whitePlayer = null;
-    if (socket.id === blackPlayer) blackPlayer = null;
-    delete playerNames[socket.id];
+    console.log(`❌ Disconnected: ${socket.id} (Player: ${playerId}, Name: ${playerName})`);
+
+    const room = getPlayerRoom(playerId);
+    if (!room) return;
+
+    if (room.status === 'waiting') {
+      cleanupRoom(room.roomId);
+      return;
+    }
+
+    if (room.status === 'playing') {
+      room.status = 'reconnecting';
+      const isWhite = room.whitePlayerId === playerId;
+      const opponentSocketId = isWhite ? room.black : room.white;
+
+      if (opponentSocketId) {
+        io.to(opponentSocketId).emit("opponentDisconnected", JSON.stringify({
+          message: `${playerName} disconnected. Waiting 30s...`,
+        }));
+      }
+
+      room.reconnectTimer = setTimeout(() => {
+        const currentRoom = rooms.get(room.roomId);
+        if (!currentRoom) return;
+
+        if (currentRoom.status === 'reconnecting') {
+           currentRoom.status = 'finished';
+           const winner = isWhite ? "black" : "white";
+           
+           if (opponentSocketId) {
+             io.to(opponentSocketId).emit("gameOver", JSON.stringify({
+               winner,
+               reason: `${playerName} abandoned the match`,
+             }));
+           }
+           setTimeout(() => cleanupRoom(room.roomId), 10000);
+        }
+      }, 30000);
+    }
   });
 });
 
 server.listen(PORT, () => {
   console.log(`🟢 Chess server running on port ${PORT}`);
   console.log(`📄 Swagger docs available at http://localhost:${PORT}/api-docs`);
+  console.log(`🎮 Room-based multiplayer system active.`);
 });

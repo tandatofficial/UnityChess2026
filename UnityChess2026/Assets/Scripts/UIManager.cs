@@ -61,8 +61,15 @@ public class UIManager : MonoBehaviour
     public void RestartGame()
     {
         Time.timeScale = 1f;
+
+        if (SocketManager.Instance != null && SocketManager.Instance.IsConnected)
+        {
+            SocketManager.Instance.Disconnect();
+        }
+
         PlayerPrefs.SetInt("AutoStartGame", 1);
         PlayerPrefs.Save();
+
         SceneManager.LoadScene(SceneManager.GetActiveScene().buildIndex);
     }
 }

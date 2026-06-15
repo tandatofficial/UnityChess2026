@@ -71,20 +71,18 @@ public class Square : MonoBehaviour
             if (EventSystem.current.IsPointerOverGameObject()) return;
         }
 
-        // Guard against missing GameManager
-        if (GameManager.Instance == null)
-        {
-            Debug.LogWarning("GameManager.Instance is null when clicking square.");
+        GameManager gm = GameManager.Get();
+        if (gm == null)
             return;
-        }
 
-        GameManager.Instance.TryMoveTo(row, col);
+        gm.TryMoveTo(row, col);
     }
 
     private void OnMouseEnter()
     {
         if (EventSystem.current != null && EventSystem.current.IsPointerOverGameObject()) return;
-        if (GameManager.Instance != null && GameManager.Instance.selectedPiece != null && CursorManager.Instance != null)
+        GameManager gm = GameManager.Get();
+        if (gm != null && gm.selectedPiece != null && CursorManager.Instance != null)
             CursorManager.Instance.SetHand();
     }
 

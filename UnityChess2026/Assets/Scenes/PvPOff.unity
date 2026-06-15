@@ -10670,6 +10670,10 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   selectedPiece: {fileID: 0}
   currentTurn: 0
+  currentGameMode: 1
+  isGameOver: 0
+  isPausedForReconnect: 0
+  pendingNetworkMove: 
   enableCameraSwitch: 0
 --- !u!114 &1719114415
 MonoBehaviour:
@@ -10698,6 +10702,10 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   assignedColor: 0
   isSpectator: 0
+  isOnlineMode: 0
+  currentRoomId: 
+  opponentName: 
+  serverUrl: http://localhost:11100
   usernameInput: {fileID: 0}
   playerNameText: {fileID: 0}
   joinButton: {fileID: 0}

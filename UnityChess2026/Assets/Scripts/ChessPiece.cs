@@ -153,10 +153,22 @@ public class ChessPiece : MonoBehaviour
 
     private void OnMouseEnter()
     {
-        if (EventSystem.current!= null && EventSystem.current.IsPointerOverGameObject()) return;
+        if (EventSystem.current != null && EventSystem.current.IsPointerOverGameObject()) return;
 
-        if (CursorManager.Instance != null && GameManager.Instance.GetValidMoves(this).Count > 0 && color == GameManager.Instance.currentTurn)
-            CursorManager.Instance.SetHand();
+        if (GameManager.Instance == null || CursorManager.Instance == null) return;
+        
+        try
+        {
+            var validMoves = GameManager.Instance.GetValidMoves(this);
+            if (validMoves != null && validMoves.Count > 0 && color == GameManager.Instance.currentTurn)
+            {
+                CursorManager.Instance.SetHand();
+            }
+        }
+        catch (System.Exception)
+        {
+            // Ignore errors during scene unloads or invalid state
+        }
     }
 
     private void OnMouseExit()
@@ -164,7 +176,9 @@ public class ChessPiece : MonoBehaviour
         if (EventSystem.current != null && EventSystem.current.IsPointerOverGameObject()) return;
 
         if (CursorManager.Instance != null)
+        {
             CursorManager.Instance.SetDefault();
+        }
     }
 
     public void DisableCollider()
