@@ -1,4 +1,4 @@
-﻿using UnityEngine;
+using UnityEngine;
 using UnityEngine.UI;
 using UnityEngine.SceneManagement;
 using TMPro;
@@ -13,7 +13,7 @@ public class UIManager : MonoBehaviour
     public Button restartButton;
 
     [Header("User Panel")]
-    public GameObject userPanel; // 👈 Thêm dòng này
+    public GameObject userPanel;
 
     private void Awake()
     {
@@ -22,11 +22,17 @@ public class UIManager : MonoBehaviour
         else
             Destroy(gameObject);
 
-        gameOverPanel.SetActive(false);
-        restartButton.onClick.AddListener(RestartGame);
+        if (gameOverPanel != null)
+            gameOverPanel.SetActive(false);
+
+        if (restartButton != null)
+        {
+            restartButton.onClick.RemoveAllListeners();
+            restartButton.onClick.AddListener(RestartGame);
+        }
     }
 
-    public void HideUserPanel() // 👈 Hàm để ẩn panel người dùng
+    public void HideUserPanel()
     {
         if (userPanel != null)
         {
@@ -36,19 +42,27 @@ public class UIManager : MonoBehaviour
 
     public void ShowWinScreen(PieceColor winner)
     {
-        gameOverPanel.SetActive(true);
-        gameOverText.text = winner == PieceColor.White ? "Trắng Thắng!" : "Đen Thắng!";
+        if (gameOverPanel != null)
+            gameOverPanel.SetActive(true);
+
+        if (gameOverText != null)
+            gameOverText.text = winner == PieceColor.White ? "Trắng Thắng!" : "Đen Thắng!";
     }
 
     public void ShowDrawScreen(string reason)
     {
-        gameOverPanel.SetActive(true);
-        gameOverText.text = $"Hòa: {reason}";
+        if (gameOverPanel != null)
+            gameOverPanel.SetActive(true);
+
+        if (gameOverText != null)
+            gameOverText.text = $"Hòa: {reason}";
     }
 
     public void RestartGame()
     {
         Time.timeScale = 1f;
+        PlayerPrefs.SetInt("AutoStartGame", 1);
+        PlayerPrefs.Save();
         SceneManager.LoadScene(SceneManager.GetActiveScene().buildIndex);
     }
 }

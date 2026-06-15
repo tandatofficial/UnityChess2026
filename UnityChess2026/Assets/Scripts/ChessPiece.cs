@@ -155,7 +155,7 @@ public class ChessPiece : MonoBehaviour
     {
         if (EventSystem.current!= null && EventSystem.current.IsPointerOverGameObject()) return;
 
-        if (GameManager.Instance.GetValidMoves(this).Count > 0 && color == GameManager.Instance.currentTurn)
+        if (CursorManager.Instance != null && GameManager.Instance.GetValidMoves(this).Count > 0 && color == GameManager.Instance.currentTurn)
             CursorManager.Instance.SetHand();
     }
 
@@ -163,7 +163,8 @@ public class ChessPiece : MonoBehaviour
     {
         if (EventSystem.current != null && EventSystem.current.IsPointerOverGameObject()) return;
 
-        CursorManager.Instance.SetDefault();
+        if (CursorManager.Instance != null)
+            CursorManager.Instance.SetDefault();
     }
 
     public void DisableCollider()

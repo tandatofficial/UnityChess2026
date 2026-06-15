@@ -173,13 +173,73 @@ public class StockfishManager : MonoBehaviour
         GameManager.Instance.ApplyMoveFromNetwork(formattedMove);
     }
 
+    private void OnDestroy()
+    {
+        if (Instance == this) Instance = null;
+        
+        if (stockfishProcess != null)
+        {
+            try
+            {
+                bool hasExited = true;
+                try
+                {
+                    hasExited = stockfishProcess.HasExited;
+                }
+                catch (System.InvalidOperationException)
+                {
+                    hasExited = true; 
+                }
+
+                if (!hasExited)
+                {
+                    SendCommand("quit");
+                    stockfishProcess.Close();
+                }
+                stockfishProcess.Dispose();
+            }
+            catch (System.Exception ex)
+            {
+                UnityEngine.Debug.LogWarning("[StockfishManager] Error closing engine on destroy: " + ex.Message);
+            }
+            finally
+            {
+                stockfishProcess = null;
+            }
+        }
+    }
+
     private void OnApplicationQuit()
     {
-        // Nhớ đóng Process khi tắt game, nếu không Stockfish sẽ chạy ngầm chiếm RAM
-        if (stockfishProcess != null && !stockfishProcess.HasExited)
+        if (stockfishProcess != null)
         {
-            SendCommand("quit");
-            stockfishProcess.Close();
+            try
+            {
+                bool hasExited = true;
+                try
+                {
+                    hasExited = stockfishProcess.HasExited;
+                }
+                catch (System.InvalidOperationException)
+                {
+                    hasExited = true;
+                }
+
+                if (!hasExited)
+                {
+                    SendCommand("quit");
+                    stockfishProcess.Close();
+                }
+                stockfishProcess.Dispose();
+            }
+            catch (System.Exception ex)
+            {
+                UnityEngine.Debug.LogWarning("[StockfishManager] Error closing engine on quit: " + ex.Message);
+            }
+            finally
+            {
+                stockfishProcess = null;
+            }
         }
     }
 }

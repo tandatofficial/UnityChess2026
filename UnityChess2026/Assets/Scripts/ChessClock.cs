@@ -151,25 +151,11 @@ public class ChessClock : MonoBehaviour
             rt.anchoredPosition3D = new Vector3(rt.anchoredPosition.x, rt.anchoredPosition.y, 0f);
         }
 
-        // Strip Inspector-defined onClick listeners by replacing the Button component
-        Button oldBtn = clockBtnGo.GetComponent<Button>();
-        if (oldBtn != null)
+        // Strip Inspector-defined onClick listeners by resetting the onClick event
+        Button btn = clockBtnGo.GetComponent<Button>();
+        if (btn != null)
         {
-            ColorBlock colors = oldBtn.colors;
-            Navigation nav = oldBtn.navigation;
-            Graphic target = oldBtn.targetGraphic;
-            SpriteState sprites = oldBtn.spriteState;
-            Selectable.Transition trans = oldBtn.transition;
-
-            DestroyImmediate(oldBtn);
-
-            Button btn = clockBtnGo.AddComponent<Button>();
-            btn.colors = colors;
-            btn.navigation = nav;
-            btn.targetGraphic = target;
-            btn.spriteState = sprites;
-            btn.transition = trans;
-
+            btn.onClick = new Button.ButtonClickedEvent();
             btn.onClick.AddListener(OpenSettingsPopup);
         }
 
@@ -184,7 +170,7 @@ public class ChessClock : MonoBehaviour
                 !(script is RectTransform) && 
                 !(script is LayoutElement))
             {
-                DestroyImmediate(script);
+                Destroy(script);
             }
         }
 

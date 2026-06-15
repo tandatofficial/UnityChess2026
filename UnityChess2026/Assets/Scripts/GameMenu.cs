@@ -119,6 +119,15 @@ public class GameMenu : MonoBehaviour
         PlaceLogoutButtonWithMenu();
 
         Time.timeScale = 1f;
+
+        // Auto restart directly into gameplay if flagged
+        if (PlayerPrefs.GetInt("AutoStartGame", 0) == 1)
+        {
+            PlayerPrefs.DeleteKey("AutoStartGame");
+            PlayerPrefs.Save();
+            int savedDifficulty = PlayerPrefs.GetInt("Difficulty", 1);
+            SelectDifficultyAndStart(savedDifficulty);
+        }
     }
 
     public void ShowDifficultyMenu()
