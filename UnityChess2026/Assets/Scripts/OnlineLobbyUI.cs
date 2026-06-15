@@ -62,6 +62,12 @@ public class OnlineLobbyUI : MonoBehaviour
         }
     }
 
+    private void Start()
+    {
+        EnsureSocketManager();
+        SubscribeEvents();
+    }
+
     private void OnDestroy()
     {
         if (Instance == this)

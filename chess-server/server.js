@@ -407,7 +407,10 @@ function createRoomState(roomId) {
     moves: [],
     currentTurn: 'white',
     boardState: null,
-    reconnectTimer: null
+    reconnectTimer: null,
+    rematchRequests: new Set(),
+    rematchReadyCount: 0,
+    cleanupTimer: null
   };
 }
 
@@ -643,7 +646,7 @@ io.on("connection", (socket) => {
 
     console.log(`🏁 [${room.roomId}] Game over: ${parsed.reason} | Winner: ${parsed.winner}`);
 
-    setTimeout(() => cleanupRoom(room.roomId), 30000);
+    room.cleanupTimer = setTimeout(() => cleanupRoom(room.roomId), 30000);
   });
 
   // --- RESIGN ---
@@ -663,7 +666,82 @@ io.on("connection", (socket) => {
     }));
 
     console.log(`🏳️ [${room.roomId}] ${loserName} resigned. ${winner} wins!`);
-    setTimeout(() => cleanupRoom(room.roomId), 30000);
+    room.cleanupTimer = setTimeout(() => cleanupRoom(room.roomId), 30000);
+  });
+
+  // --- REQUEST REMATCH ---
+  socket.on("requestRematch", () => {
+    const room = getPlayerRoom(playerId);
+    if (!room || room.status !== 'finished') return;
+
+    room.rematchRequests.add(playerId);
+    console.log(`🔄 [${room.roomId}] Player ${playerName} (${playerId}) requested a rematch. Count: ${room.rematchRequests.size}`);
+
+    if (room.rematchRequests.size === 1) {
+      // Notify the other player
+      const isWhite = room.whitePlayerId === playerId;
+      const opponentSocketId = isWhite ? room.black : room.white;
+      if (opponentSocketId) {
+        io.to(opponentSocketId).emit("opponentRequestedRematch", JSON.stringify({ message: "Opponent wants a rematch" }));
+      }
+    } else if (room.rematchRequests.size === 2) {
+      // Cancel room cleanup timer
+      if (room.cleanupTimer) {
+        clearTimeout(room.cleanupTimer);
+        room.cleanupTimer = null;
+      }
+      // Notify both players that rematch is agreed
+      io.to(room.roomId).emit("rematchAgreed", JSON.stringify({ message: "Rematch agreed" }));
+      room.rematchReadyCount = 0;
+      console.log(`🤝 [${room.roomId}] Rematch agreed by both players!`);
+    }
+  });
+
+  // --- PLAYER READY FOR REMATCH ---
+  socket.on("playerReadyForRematch", () => {
+    const room = getPlayerRoom(playerId);
+    if (!room) return;
+
+    room.rematchReadyCount++;
+    console.log(`🆕 [${room.roomId}] Player ${playerName} is ready for rematch. Ready count: ${room.rematchReadyCount}`);
+
+    if (room.rematchReadyCount === 2) {
+      // Swap colors
+      const oldWhite = room.white;
+      const oldWhitePlayerId = room.whitePlayerId;
+      const oldWhiteName = room.whiteName;
+
+      room.white = room.black;
+      room.whitePlayerId = room.blackPlayerId;
+      room.whiteName = room.blackName;
+
+      room.black = oldWhite;
+      room.blackPlayerId = oldWhitePlayerId;
+      room.blackName = oldWhiteName;
+
+      // Reset room state
+      room.status = 'playing';
+      room.moves = [];
+      room.currentTurn = 'white';
+      room.boardState = null;
+      room.rematchRequests.clear();
+      room.rematchReadyCount = 0;
+
+      // Start the game with swapped colors
+      io.to(room.white).emit("gameStart", JSON.stringify({
+        roomId: room.roomId,
+        color: "white",
+        opponentName: room.blackName,
+      }));
+
+      io.to(room.black).emit("gameStart", JSON.stringify({
+        roomId: room.roomId,
+        color: "black",
+        opponentName: room.whiteName,
+      }));
+
+      console.log(`🎮 Rematch game started in room ${room.roomId}: ${room.whiteName} (white) vs ${room.blackName} (black)`);
+    }
   });
 
   // --- DISCONNECT ---

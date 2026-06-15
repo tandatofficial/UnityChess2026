@@ -58,6 +58,8 @@ public class SocketManager : MonoBehaviour
     public event Action<string> OnReconnectFailed;
     public event Action OnConnected;
     public event Action OnDisconnected;
+    public event Action OnOpponentRequestedRematch;
+    public event Action OnRematchAgreed;
 
     private bool applicationQuitting = false;
     public string playerId { get; private set; }
@@ -389,6 +391,26 @@ public class SocketManager : MonoBehaviour
                 OnOpponentReconnected?.Invoke(json);
             });
         });
+
+        // --- OPPONENT REQUESTED REMATCH ---
+        socket.On("opponentRequestedRematch", (res) =>
+        {
+            EnqueueMainThread(() =>
+            {
+                Debug.Log("🔄 Opponent requested a rematch!");
+                OnOpponentRequestedRematch?.Invoke();
+            });
+        });
+
+        // --- REMATCH AGREED ---
+        socket.On("rematchAgreed", (res) =>
+        {
+            EnqueueMainThread(() =>
+            {
+                Debug.Log("🤝 Rematch agreed by both players!");
+                OnRematchAgreed?.Invoke();
+            });
+        });
     }
 
     // ------------------------------------------------
@@ -426,6 +448,26 @@ public class SocketManager : MonoBehaviour
         string json = JsonUtility.ToJson(new JoinRoomData { roomId = roomId.ToUpper().Trim() });
         socket.Emit("joinRoom", json);
         Debug.Log($"📤 Requesting to join room: {roomId}");
+    }
+
+    /// <summary>
+    /// Request a rematch from the opponent.
+    /// </summary>
+    public void RequestRematch()
+    {
+        if (socket == null || !socket.Connected) return;
+        socket.Emit("requestRematch");
+        Debug.Log("📤 Emitted requestRematch");
+    }
+
+    /// <summary>
+    /// Notify the server that the player is ready for the rematch.
+    /// </summary>
+    public void SendPlayerReadyForRematch()
+    {
+        if (socket == null || !socket.Connected) return;
+        socket.Emit("playerReadyForRematch");
+        Debug.Log("📤 Emitted playerReadyForRematch");
     }
 
     /// <summary>

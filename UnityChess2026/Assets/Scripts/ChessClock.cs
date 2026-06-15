@@ -257,6 +257,13 @@ public class ChessClock : MonoBehaviour
         if (GameObject.Find("OnlineLobbyPanel") != null || GameObject.Find("WaitingPanel") != null)
             return false;
 
+        // In online mode, the match is only active once GameManager is set to Online
+        if (SocketManager.Instance != null && SocketManager.Instance.isOnlineMode)
+        {
+            if (gm.currentGameMode != GameMode.Online)
+                return false;
+        }
+
         return true;
     }
 
@@ -458,6 +465,12 @@ public class ChessClock : MonoBehaviour
                 string loserName = (loser == PieceColor.White) ? "Trắng" : "Đen";
                 string winnerName = (winner == PieceColor.White) ? "Trắng" : "Đen";
                 UIManager.Instance.gameOverText.text = $"{loserName} hết giờ!\n{winnerName} Thắng!";
+            }
+
+            if (GameManager.Instance.currentGameMode == GameMode.Online && SocketManager.Instance != null)
+            {
+                string winnerStr = winner == PieceColor.White ? "white" : "black";
+                SocketManager.Instance.SendGameOver(winnerStr, "timeout");
             }
         }
     }

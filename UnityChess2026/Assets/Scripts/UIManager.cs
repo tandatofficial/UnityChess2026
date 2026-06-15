@@ -32,6 +32,47 @@ public class UIManager : MonoBehaviour
         }
     }
 
+    private void Start()
+    {
+        if (SocketManager.Instance != null)
+        {
+            SocketManager.Instance.OnOpponentRequestedRematch += HandleOpponentRequestedRematch;
+            SocketManager.Instance.OnRematchAgreed += HandleRematchAgreed;
+        }
+    }
+
+    private void OnDestroy()
+    {
+        if (SocketManager.Instance != null)
+        {
+            SocketManager.Instance.OnOpponentRequestedRematch -= HandleOpponentRequestedRematch;
+            SocketManager.Instance.OnRematchAgreed -= HandleRematchAgreed;
+        }
+    }
+
+    private void HandleOpponentRequestedRematch()
+    {
+        if (gameOverText != null)
+        {
+            string msg = "\n(Đối thủ muốn đấu lại!)";
+            if (!gameOverText.text.Contains(msg))
+            {
+                gameOverText.text += msg;
+            }
+        }
+    }
+
+    private void HandleRematchAgreed()
+    {
+        Time.timeScale = 1f;
+        PlayerPrefs.SetInt("AutoRematchPending", 1);
+        PlayerPrefs.DeleteKey("AutoOpenOnlineLobby");
+        PlayerPrefs.DeleteKey("AutoStartGame");
+        PlayerPrefs.Save();
+
+        SceneManager.LoadScene(SceneManager.GetActiveScene().buildIndex);
+    }
+
     public void HideUserPanel()
     {
         if (userPanel != null)
@@ -63,6 +104,27 @@ public class UIManager : MonoBehaviour
         Time.timeScale = 1f;
 
         bool isOnline = GameManager.Instance != null && GameManager.Instance.currentGameMode == GameMode.Online;
+
+        if (isOnline && SocketManager.Instance != null && SocketManager.Instance.IsConnected)
+        {
+            SocketManager.Instance.RequestRematch();
+
+            if (restartButton != null)
+            {
+                restartButton.interactable = false;
+                var btnText = restartButton.GetComponentInChildren<TextMeshProUGUI>();
+                if (btnText != null)
+                {
+                    btnText.text = "Đang chờ đối thủ...";
+                }
+                else
+                {
+                    var legacyText = restartButton.GetComponentInChildren<Text>();
+                    if (legacyText != null) legacyText.text = "Đang chờ đối thủ...";
+                }
+            }
+            return;
+        }
 
         if (SocketManager.Instance != null && SocketManager.Instance.IsConnected)
         {

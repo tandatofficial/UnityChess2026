@@ -148,6 +148,17 @@ public class GameMenu : MonoBehaviour
             PlayerPrefs.Save();
             PlayOnline();
         }
+
+        // Auto rematch in online mode if flagged
+        if (PlayerPrefs.GetInt("AutoRematchPending", 0) == 1)
+        {
+            PlayerPrefs.DeleteKey("AutoRematchPending");
+            PlayerPrefs.Save();
+            if (SocketManager.Instance != null)
+            {
+                SocketManager.Instance.SendPlayerReadyForRematch();
+            }
+        }
     }
 
     public void ShowDifficultyMenu()

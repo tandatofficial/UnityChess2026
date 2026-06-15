@@ -244,18 +244,31 @@ public class GameManager : MonoBehaviour
         if (IsCheckmate(opponent))
         {
             EndGame(currentTurn);
+            if (currentGameMode == GameMode.Online && SocketManager.Instance != null)
+            {
+                string winnerStr = currentTurn == PieceColor.White ? "white" : "black";
+                SocketManager.Instance.SendGameOver(winnerStr, "checkmate");
+            }
             return;
         }
 
         if (IsStalemate(opponent))
         {
             EndDraw("Stalemate");
+            if (currentGameMode == GameMode.Online && SocketManager.Instance != null)
+            {
+                SocketManager.Instance.SendGameOver("draw", "stalemate");
+            }
             return;
         }
 
         if (IsInsufficientMaterial())
         {
             EndDraw("Insufficient Material");
+            if (currentGameMode == GameMode.Online && SocketManager.Instance != null)
+            {
+                SocketManager.Instance.SendGameOver("draw", "insufficient_material");
+            }
             return;
         }
 
