@@ -666,7 +666,7 @@ public class ChessClock : MonoBehaviour
         mainRt.anchorMax = new Vector2(1, 1);
         mainRt.pivot = new Vector2(1, 1);
         mainRt.sizeDelta = new Vector2(220, 160);
-        mainRt.anchoredPosition = new Vector2(-20, -180); // Placed beautifully on top-right below standard overlays
+        mainRt.anchoredPosition = new Vector2(-29f, -28f); // Placed beautifully on top-right below standard overlays
 
         // Glassmorphism Main Background
         Image mainBg = hudContainer.AddComponent<Image>();
