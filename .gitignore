@@ -2,3 +2,15 @@
 /.codex/
 /.mcp/
 .antigravity
+
+# Unity local folders at root (in case root is opened in Unity by mistake)
+/Library/
+/Temp/
+/Obj/
+/UserSettings/
+/Logs/
+*.csproj
+*.sln
+*.suo
+*.user
+*.userprefs
