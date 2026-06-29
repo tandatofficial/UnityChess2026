@@ -351,7 +351,7 @@ public class GameMenu : MonoBehaviour
         // Hide all menus
         if (titleMenuPanel != null) titleMenuPanel.SetActive(false);
         if (menuPanel != null) menuPanel.SetActive(false);
-        if (logoImage != null) logoImage.SetActive(false);
+
         if (backButtonLayer != null) backButtonLayer.SetActive(false);
         if (settingsPanel != null) settingsPanel.SetActive(false);
         if (logoutButton != null) logoutButton.SetActive(false);
