@@ -336,6 +336,7 @@ public class GameMenu : MonoBehaviour
         {
             GameManager.Instance.currentGameMode = GameMode.AI;
             GameManager.Instance.UpdatePieceColliders();
+            if (CameraSwitcher.Instance != null) CameraSwitcher.Instance.SetCameraFor(PieceColor.White);
         }
 
         GameMenuUiSafety.RestoreFullScreenBlockers();

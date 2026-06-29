@@ -429,7 +429,7 @@ function getOpponentId(room, playerId) {
 function broadcastAvailableRooms() {
   const availableRooms = [];
   for (const [roomId, room] of rooms.entries()) {
-    if (room.status === 'waiting') {
+    if (room.status === 'waiting' && !room.isPrivate) {
       availableRooms.push({
         roomId: room.roomId,
         creatorName: room.whiteName
@@ -508,7 +508,7 @@ io.on("connection", (socket) => {
   socket.on("getAvailableRooms", () => {
     const availableRooms = [];
     for (const [rId, rm] of rooms.entries()) {
-      if (rm.status === 'waiting') {
+      if (rm.status === 'waiting' && !rm.isPrivate) {
         availableRooms.push({
           roomId: rm.roomId,
           creatorName: rm.whiteName
@@ -522,7 +522,7 @@ io.on("connection", (socket) => {
   {
     const availableRooms = [];
     for (const [rId, rm] of rooms.entries()) {
-      if (rm.status === 'waiting') {
+      if (rm.status === 'waiting' && !rm.isPrivate) {
         availableRooms.push({
           roomId: rm.roomId,
           creatorName: rm.whiteName
@@ -545,16 +545,27 @@ io.on("connection", (socket) => {
       roomId = generateRoomId();
     }
 
+    let isPrivate = false;
+    if (data) {
+      try {
+        const parsed = typeof data === 'string' ? JSON.parse(data) : data;
+        isPrivate = !!parsed.isPrivate;
+      } catch (e) {
+        console.error("Error parsing createRoom data:", e);
+      }
+    }
+
     const room = createRoomState(roomId);
     room.white = socket.id;
     room.whitePlayerId = playerId;
     room.whiteName = playerName;
+    room.isPrivate = isPrivate;
     rooms.set(roomId, room);
     playerRoomMap.set(playerId, roomId);
 
     socket.join(roomId);
     socket.emit("roomCreated", JSON.stringify({ roomId }));
-    console.log(`🏠 Room ${roomId} created by ${playerName} (white). Active rooms: ${rooms.size}`);
+    console.log(`🏠 Room ${roomId} (private: ${isPrivate}) created by ${playerName} (white). Active rooms: ${rooms.size}`);
     broadcastAvailableRooms();
   });
 

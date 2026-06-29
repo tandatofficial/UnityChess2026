@@ -443,7 +443,7 @@ public class SocketManager : MonoBehaviour
     /// Request the server to create a new room.
     /// The result will come back via OnRoomCreated event.
     /// </summary>
-    public void CreateRoom()
+    public void CreateRoom(bool isPrivate = false)
     {
         if (socket == null || !socket.Connected)
         {
@@ -451,8 +451,9 @@ public class SocketManager : MonoBehaviour
             return;
         }
 
-        socket.Emit("createRoom", "{}");
-        Debug.Log("📤 Requesting room creation...");
+        string json = "{\"isPrivate\":" + (isPrivate ? "true" : "false") + "}";
+        socket.Emit("createRoom", json);
+        Debug.Log($"📤 Requesting room creation (private: {isPrivate})...");
     }
 
     /// <summary>

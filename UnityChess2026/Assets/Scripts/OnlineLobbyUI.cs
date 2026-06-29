@@ -4,11 +4,12 @@ using UnityEngine.SceneManagement;
 using TMPro;
 using System.Collections;
 using System.Collections.Generic;
+using Unity.Cinemachine;
 
 /// <summary>
-/// Online Lobby UI — Manages sảnh chờ trực tuyến.
-/// Thay vì tự tạo giao diện bằng code, phiên bản này cho phép gán trực tiếp các Panel, Button, InputField 
-/// trong Unity Editor để lập trình viên dễ dàng tùy chỉnh bố cục bằng tay.
+/// Online Lobby UI — 2 luồng chính: CREATE và JOIN
+/// CREATE → CreatePanel (public/private)
+/// JOIN   → JoinPanel (danh sách phòng + Find Private Room)
 /// </summary>
 public class OnlineLobbyUI : MonoBehaviour
 {
@@ -18,58 +19,103 @@ public class OnlineLobbyUI : MonoBehaviour
         get
         {
             if (_instance == null)
-            {
-                _instance = UnityEngine.Object.FindFirstObjectByType<OnlineLobbyUI>();
-            }
+                _instance = UnityEngine.Object.FindAnyObjectByType<OnlineLobbyUI>();
             return _instance;
         }
-        set
-        {
-            _instance = value;
-        }
+        set { _instance = value; }
     }
 
     [Header("Lobby State")]
     public bool isLobbyActive = false;
 
-    [Header("UI Panels (Gán từ Unity Editor)")]
-    [Tooltip("Panel toàn màn hình hiển thị lựa chọn (CREATE ROOM / JOIN ROOM / BACK)")]
+    // -------------------------------------------------------
+    // Panels
+    // -------------------------------------------------------
+    [Header("UI Panels")]
+    [Tooltip("Panel chính: CREATE + JOIN + BACK")]
     public GameObject selectionPanel;
 
-    [Tooltip("Panel toàn màn hình hiển thị nhập mã room và danh sách các public room")]
-    public GameObject joinPanel;
+    [Tooltip("Panel CREATE: Create Public + Create Private + Back")]
+    public GameObject createPanel;
 
-    [Tooltip("Panel toàn màn hình hiển thị mã code của phòng trong lúc chờ đối thủ")]
+    [Tooltip("Panel JOIN: Danh sách phòng + Find Private Room + Back")]
+    public GameObject joinPublicPanel;
+
+    [Tooltip("Panel nhập mã phòng private")]
+    public GameObject joinPrivatePanel;
+
+    [Tooltip("Panel chờ đối thủ")]
     public GameObject waitingPanel;
 
-    [Header("UI Controls (Gán từ Unity Editor)")]
+    // -------------------------------------------------------
+    // UI Controls
+    // -------------------------------------------------------
+    [Header("UI Controls")]
     public TMP_InputField roomIdInput;
     public TextMeshProUGUI statusText;
     public TextMeshProUGUI roomCodeDisplay;
-    public Button createRoomButton;
-    public Button joinRoomButton;
-    public Button backButton;
-    public Button cancelWaitButton;
-    public Button refreshRoomsButton;
+    [Tooltip("Container ẩn/hiện Room Code (chỉ Private)")]
+    public GameObject roomCodeSection;
 
-    [Header("Room List Settings")]
-    [Tooltip("Vùng chứa (Content) của ScrollRect để sinh các dòng phòng chờ")]
+    // -------------------------------------------------------
+    // SelectionPanel Buttons
+    // -------------------------------------------------------
+    [Header("Selection Panel Buttons")]
+    public Button btnCreate;        // → ShowCreatePanel
+    public Button btnJoin;          // → ShowJoinPublicPanel
+    public Button btnBackToMenu;    // → Back to main menu
+
+    // -------------------------------------------------------
+    // CreatePanel Buttons
+    // -------------------------------------------------------
+    [Header("Create Panel Buttons")]
+    public Button btnCreatePublic;   // → CreateRoom(false)
+    public Button btnCreatePrivate;  // → CreateRoom(true)
+    public Button btnBackFromCreate; // → ShowSelectionPanel
+
+    // -------------------------------------------------------
+    // JoinPublicPanel Buttons
+    // -------------------------------------------------------
+    [Header("Join Public Panel Buttons")]
+    public Button btnRefreshRooms;
+    public Button btnFindPrivateRoom; // → ShowJoinPrivatePanel
+    public Button btnBackFromJoin;    // → ShowSelectionPanel
     public RectTransform roomListContent;
-    [Tooltip("Prefab cho từng dòng phòng (Tùy chọn, nếu để trống sẽ tự tạo dòng mặc định bằng code)")]
     public GameObject roomItemPrefab;
 
-    // Font reference để dự phòng khi tự sinh text
+    // -------------------------------------------------------
+    // JoinPrivatePanel Buttons
+    // -------------------------------------------------------
+    [Header("Join Private Panel Buttons")]
+    public Button btnSubmitPrivateJoin;
+    public Button btnBackFromJoinPrivate; // → ShowJoinPublicPanel
+
+    // -------------------------------------------------------
+    // WaitingPanel Buttons
+    // -------------------------------------------------------
+    [Header("Waiting Panel Buttons")]
+    public Button btnCancelWait;
+
+    // -------------------------------------------------------
+    // Camera
+    // -------------------------------------------------------
+    [Header("Camera")]
+    [Tooltip("VCam_Menu — priority 20 khi lobby mở, 0 khi đóng")]
+    public CinemachineCamera lobbyVCam;
+
+    // -------------------------------------------------------
+    // Private State
+    // -------------------------------------------------------
     private TMP_FontAsset cachedFont;
+    private bool _currentRoomIsPrivate = false;
+
+    // -------------------------------------------------------
+    // Unity Lifecycle
+    // -------------------------------------------------------
     private void Awake()
     {
-        if (_instance == null)
-        {
-            _instance = this;
-        }
-        else if (_instance != this)
-        {
-            Destroy(gameObject);
-        }
+        if (_instance == null) _instance = this;
+        else if (_instance != this) { Destroy(gameObject); return; }
     }
 
     private void Start()
@@ -82,41 +128,32 @@ public class OnlineLobbyUI : MonoBehaviour
 
     private void OnDestroy()
     {
-        if (Instance == this)
-        {
-            Instance = null;
-        }
+        if (Instance == this) Instance = null;
         UnsubscribeEvents();
     }
 
-    // ------------------------------------------------
-    // Public API / Navigation
-    // ------------------------------------------------
+    // -------------------------------------------------------
+    // Public API
+    // -------------------------------------------------------
 
     public void ShowLobby()
     {
         isLobbyActive = true;
-
         EnsureSocketManager();
         SubscribeEvents();
-
-        // Ẩn hiện các Panel theo đúng trạng thái sảnh chờ chính
-        if (selectionPanel != null) selectionPanel.SetActive(true);
-        if (joinPanel != null) joinPanel.SetActive(false);
-        if (waitingPanel != null) waitingPanel.SetActive(false);
-
         SetupButtonListeners();
 
-        // Tự động kết nối tới Server
+        ShowSelectionPanel();
+
+        // Kích hoạt camera menu (close-up board)
+        if (lobbyVCam != null) lobbyVCam.Priority = 20;
+
+        // Kết nối server
         string playerName = "Player";
         if (AccountManager.Instance != null && AccountManager.Instance.IsLoggedIn)
-        {
             playerName = AccountManager.Instance.CurrentAccount.Username;
-        }
         else
-        {
             playerName = PlayerPrefs.GetString("loggedInUser", "Player_" + Random.Range(1000, 9999));
-        }
 
         if (SocketManager.Instance != null)
         {
@@ -139,97 +176,99 @@ public class OnlineLobbyUI : MonoBehaviour
         isLobbyActive = false;
 
         if (selectionPanel != null) selectionPanel.SetActive(false);
-        if (joinPanel != null) joinPanel.SetActive(false);
+        if (createPanel != null) createPanel.SetActive(false);
+        if (joinPublicPanel != null) joinPublicPanel.SetActive(false);
+        if (joinPrivatePanel != null) joinPrivatePanel.SetActive(false);
         if (waitingPanel != null) waitingPanel.SetActive(false);
+
+        // Giải phóng camera menu
+        if (lobbyVCam != null) lobbyVCam.Priority = 0;
     }
 
-    public void ShowJoinScreen()
-    {
-        if (selectionPanel != null) selectionPanel.SetActive(false);
-        if (joinPanel != null) joinPanel.SetActive(true);
-        if (waitingPanel != null) waitingPanel.SetActive(false);
+    // -------------------------------------------------------
+    // Navigation
+    // -------------------------------------------------------
 
+    public void ShowSelectionPanel()
+    {
+        SetPanel(selectionPanel);
+    }
+
+    public void ShowCreatePanel()
+    {
+        SetPanel(createPanel);
+    }
+
+    public void ShowJoinPublicPanel()
+    {
+        SetPanel(joinPublicPanel);
         if (SocketManager.Instance != null && SocketManager.Instance.IsConnected)
-        {
             SocketManager.Instance.GetAvailableRooms();
-        }
     }
 
-    public void ShowSelectionScreen()
+    public void ShowJoinPrivatePanel()
     {
-        if (selectionPanel != null) selectionPanel.SetActive(true);
-        if (joinPanel != null) joinPanel.SetActive(false);
-        if (waitingPanel != null) waitingPanel.SetActive(false);
+        SetPanel(joinPrivatePanel);
+        if (roomIdInput != null) roomIdInput.text = "";
     }
+
+    private void SetPanel(GameObject targetPanel)
+    {
+        if (selectionPanel != null) selectionPanel.SetActive(selectionPanel == targetPanel);
+        if (createPanel != null) createPanel.SetActive(createPanel == targetPanel);
+        if (joinPublicPanel != null) joinPublicPanel.SetActive(joinPublicPanel == targetPanel);
+        if (joinPrivatePanel != null) joinPrivatePanel.SetActive(joinPrivatePanel == targetPanel);
+        if (waitingPanel != null) waitingPanel.SetActive(waitingPanel == targetPanel);
+    }
+
+    // -------------------------------------------------------
+    // Interactability
+    // -------------------------------------------------------
 
     private void SetInteractable(bool state)
     {
-        if (createRoomButton != null) createRoomButton.interactable = state;
-        if (joinRoomButton != null) joinRoomButton.interactable = state;
+        if (btnCreatePublic != null) btnCreatePublic.interactable = state;
+        if (btnCreatePrivate != null) btnCreatePrivate.interactable = state;
+        if (btnJoin != null) btnJoin.interactable = state;
+        if (btnFindPrivateRoom != null) btnFindPrivateRoom.interactable = state;
         if (roomIdInput != null) roomIdInput.interactable = state;
     }
 
+    // -------------------------------------------------------
+    // Button Listener Setup
+    // -------------------------------------------------------
+
     private void SetupButtonListeners()
     {
-        // Gán sự kiện cho các nút bấm bằng code (để phòng hờ lập trình viên quên kéo thả OnClick trong Unity Editor)
-        if (createRoomButton != null)
-        {
-            createRoomButton.onClick.RemoveListener(OnCreateRoomClicked);
-            createRoomButton.onClick.AddListener(OnCreateRoomClicked);
-        }
-        if (joinRoomButton != null)
-        {
-            joinRoomButton.onClick.RemoveListener(ShowJoinScreen);
-            joinRoomButton.onClick.AddListener(ShowJoinScreen);
-        }
-        if (backButton != null)
-        {
-            backButton.onClick.RemoveListener(OnBackClicked);
-            backButton.onClick.AddListener(OnBackClicked);
-        }
-        if (cancelWaitButton != null)
-        {
-            cancelWaitButton.onClick.RemoveListener(OnCancelWaitClicked);
-            cancelWaitButton.onClick.AddListener(OnCancelWaitClicked);
-        }
-        if (refreshRoomsButton != null)
-        {
-            refreshRoomsButton.onClick.RemoveListener(OnRefreshRoomsClicked);
-            refreshRoomsButton.onClick.AddListener(OnRefreshRoomsClicked);
-        }
+        AddListener(btnCreate, ShowCreatePanel);
+        AddListener(btnJoin, ShowJoinPublicPanel);
+        AddListener(btnBackToMenu, OnBackToMenuClicked);
+        AddListener(btnCreatePublic, OnCreatePublicClicked);
+        AddListener(btnCreatePrivate, OnCreatePrivateClicked);
+        AddListener(btnBackFromCreate, ShowSelectionPanel);
+        AddListener(btnRefreshRooms, OnRefreshRoomsClicked);
+        AddListener(btnFindPrivateRoom, ShowJoinPrivatePanel);
+        AddListener(btnBackFromJoin, ShowSelectionPanel);
+        AddListener(btnSubmitPrivateJoin, OnSubmitPrivateJoinClicked);
+        AddListener(btnBackFromJoinPrivate, ShowJoinPublicPanel);
+        AddListener(btnCancelWait, OnCancelWaitClicked);
     }
 
-    private void EnsureSocketManager()
+    private void AddListener(Button btn, UnityEngine.Events.UnityAction action)
     {
-        if (SocketManager.Instance == null)
-        {
-            GameObject smGo = new GameObject("SocketManager");
-            smGo.AddComponent<SocketManager>();
-        }
+        if (btn == null) return;
+        btn.onClick.RemoveListener(action);
+        btn.onClick.AddListener(action);
     }
 
-    private bool HasBoardPieces()
-    {
-        if (GameManager.Instance == null || GameManager.Instance.pieceBoard == null)
-            return false;
-
-        foreach (ChessPiece piece in GameManager.Instance.pieceBoard)
-        {
-            if (piece != null) return true;
-        }
-        return false;
-    }
-
-    // ------------------------------------------------
-    // Event Subscriptions
-    // ------------------------------------------------
+    // -------------------------------------------------------
+    // Socket Events
+    // -------------------------------------------------------
 
     private void SubscribeEvents()
     {
         if (SocketManager.Instance == null) return;
-
         UnsubscribeEvents();
-
         SocketManager.Instance.OnRoomCreated += HandleRoomCreated;
         SocketManager.Instance.OnGameStarted += HandleGameStarted;
         SocketManager.Instance.OnJoinError += HandleJoinError;
@@ -246,7 +285,6 @@ public class OnlineLobbyUI : MonoBehaviour
     private void UnsubscribeEvents()
     {
         if (SocketManager.Instance == null) return;
-
         SocketManager.Instance.OnRoomCreated -= HandleRoomCreated;
         SocketManager.Instance.OnGameStarted -= HandleGameStarted;
         SocketManager.Instance.OnJoinError -= HandleJoinError;
@@ -260,46 +298,33 @@ public class OnlineLobbyUI : MonoBehaviour
         SocketManager.Instance.OnAvailableRoomsListReceived -= HandleAvailableRoomsListReceived;
     }
 
-    // ------------------------------------------------
-    // Event Handlers từ SocketManager
-    // ------------------------------------------------
+    // -------------------------------------------------------
+    // Event Handlers
+    // -------------------------------------------------------
 
     private void HandleConnected()
     {
         SetInteractable(true);
-        if (statusText != null)
-        {
-            statusText.text = "<color=#55FF55>Connected to server!</color>";
-        }
-        if (SocketManager.Instance != null)
-        {
-            SocketManager.Instance.GetAvailableRooms();
-        }
+        if (statusText != null) statusText.text = "<color=#55FF55>Connected to server!</color>";
+        if (SocketManager.Instance != null) SocketManager.Instance.GetAvailableRooms();
     }
 
     private void HandleDisconnected()
     {
         SetInteractable(false);
         if (statusText != null)
-        {
             statusText.text = "<color=#FF6B6B>Cannot connect to server. Run: cd chess-server && npm start</color>";
-        }
     }
 
     private void HandleRoomCreated(string roomId)
     {
         Debug.Log($"[OnlineLobbyUI] Room created: {roomId}");
+        SetPanel(waitingPanel);
 
-        if (selectionPanel != null) selectionPanel.SetActive(false);
-        if (joinPanel != null) joinPanel.SetActive(false);
-        
-        ShowWaitingScreen(roomId);
-    }
-
-    private void ShowWaitingScreen(string roomId)
-    {
-        if (waitingPanel != null) waitingPanel.SetActive(true);
-        if (roomCodeDisplay != null) roomCodeDisplay.text = roomId;
+        // Chỉ hiện mã phòng với Private room
+        bool showCode = _currentRoomIsPrivate;
+        if (roomCodeSection != null) roomCodeSection.SetActive(showCode);
+        if (roomCodeDisplay != null) roomCodeDisplay.text = showCode ? roomId : "";
     }
 
     private void HandleGameStarted(string opponentName, string color)
@@ -314,9 +339,7 @@ public class OnlineLobbyUI : MonoBehaviour
         }
 
         if (CameraSwitcher.Instance != null && SocketManager.Instance != null)
-        {
             CameraSwitcher.Instance.SetCameraFor(SocketManager.Instance.assignedColor);
-        }
 
         HideLobby();
         StartCoroutine(StartOnlineGame(null));
@@ -344,8 +367,8 @@ public class OnlineLobbyUI : MonoBehaviour
         }
 
         HideLobby();
-
-        StartCoroutine(StartOnlineGame(() => {
+        StartCoroutine(StartOnlineGame(() =>
+        {
             if (GameManager.Instance != null)
             {
                 GameManager.Instance.LoadBoardState(data.boardState);
@@ -364,169 +387,63 @@ public class OnlineLobbyUI : MonoBehaviour
     private void HandleOpponentReconnected(string json)
     {
         Debug.Log($"[OnlineLobbyUI] Opponent Reconnected.");
-        if (GameManager.Instance != null)
-        {
-            GameManager.Instance.isPausedForReconnect = false;
-        }
+        if (GameManager.Instance != null) GameManager.Instance.isPausedForReconnect = false;
         ShowToastMessage("Opponent reconnected!");
     }
 
     private void HandleOpponentDisconnected(string message)
     {
         Debug.Log($"[OnlineLobbyUI] Opponent Disconnected: {message}");
-        if (GameManager.Instance != null)
-        {
-            GameManager.Instance.isPausedForReconnect = true;
-        }
+        if (GameManager.Instance != null) GameManager.Instance.isPausedForReconnect = true;
         ShowToastMessage("Opponent disconnected. Waiting 30s...");
     }
 
-    private void ShowToastMessage(string msg)
-    {
-        Debug.Log(msg);
-    }
-
-    private IEnumerator StartOnlineGame(System.Action onSceneLoaded)
-    {
-        bool loadedScene = SceneManager.GetActiveScene().name != "PvPOff";
-
-        if (loadedScene)
-            SceneManager.LoadScene("PvPOff");
-
-        float timeout = 5f;
-        while (timeout > 0f)
-        {
-            GameManager gm = GameManager.Get();
-            if (gm != null && (!loadedScene || HasBoardPieces()))
-                break;
-
-            yield return null;
-            timeout -= Time.deltaTime;
-        }
-
-        GameManager gameManager = GameManager.Get();
-        if (gameManager == null)
-        {
-            Debug.LogError("[OnlineLobbyUI] GameManager not found — cannot start online game.");
-            yield break;
-        }
-
-        if (loadedScene)
-        {
-            gameManager.currentGameMode = GameMode.Online;
-            gameManager.currentTurn = PieceColor.White;
-            gameManager.UpdatePieceColliders();
-        }
-        else
-        {
-            gameManager.PrepareForOnlineGame();
-        }
-
-        if (CameraSwitcher.Instance != null && SocketManager.Instance != null)
-        {
-            CameraSwitcher.Instance.SetCameraFor(SocketManager.Instance.assignedColor);
-        }
-
-        GameMenu gameMenu = FindObjectOfType<GameMenu>();
-        if (gameMenu != null)
-        {
-            if (gameMenu.titleMenuPanel != null) gameMenu.titleMenuPanel.SetActive(false);
-            if (gameMenu.menuPanel != null) gameMenu.menuPanel.SetActive(false);
-            if (gameMenu.logoImage != null) gameMenu.logoImage.SetActive(false);
-            if (gameMenu.backButtonLayer != null) gameMenu.backButtonLayer.SetActive(false);
-            if (gameMenu.settingsPanel != null) gameMenu.settingsPanel.SetActive(false);
-            if (gameMenu.logoutButton != null) gameMenu.logoutButton.SetActive(true);
-
-            if (gameMenu.pauseButton != null) gameMenu.pauseButton.SetActive(true);
-            if (gameMenu.pauseMenuManager != null) gameMenu.pauseMenuManager.SetPauseInputEnabled(true);
-
-            if (gameMenu.easyModeOnlyUI != null)
-            {
-                foreach (GameObject uiElement in gameMenu.easyModeOnlyUI)
-                {
-                    if (uiElement != null) uiElement.SetActive(false);
-                }
-            }
-        }
-
-        if (onSceneLoaded != null)
-        {
-            onSceneLoaded.Invoke();
-        }
-
-        if (GameManager.Instance != null)
-        {
-            GameManager.Instance.UpdatePieceColliders();
-        }
-    }
+    private void ShowToastMessage(string msg) => Debug.Log(msg);
 
     private void HandleJoinError(string error)
     {
         Debug.LogWarning($"[OnlineLobbyUI] Join error: {error}");
-
-        if (statusText != null)
-        {
-            statusText.text = $"<color=#FF6B6B>{error}</color>";
-        }
+        if (statusText != null) statusText.text = $"<color=#FF6B6B>{error}</color>";
     }
 
     private void HandleGameOver(string winner, string reason)
     {
         Debug.Log($"[OnlineLobbyUI] Game Over. Winner: {winner}, Reason: {reason}");
-
-        if (GameManager.Instance != null)
-        {
-            GameManager.Instance.HandleNetworkGameOver(winner, reason);
-        }
+        if (GameManager.Instance != null) GameManager.Instance.HandleNetworkGameOver(winner, reason);
     }
 
-    [System.Serializable]
-    private class AvailableRoomData
-    {
-        public string roomId;
-        public string creatorName;
-    }
-
-    [System.Serializable]
-    private class AvailableRoomsListWrapper
-    {
-        public System.Collections.Generic.List<AvailableRoomData> rooms;
-    }
+    [System.Serializable] private class AvailableRoomData { public string roomId; public string creatorName; }
+    [System.Serializable] private class AvailableRoomsListWrapper { public List<AvailableRoomData> rooms; }
 
     private void HandleAvailableRoomsListReceived(string json)
     {
         Debug.Log($"[OnlineLobbyUI] Received available rooms: {json}");
         try
         {
-            AvailableRoomsListWrapper data = JsonUtility.FromJson<AvailableRoomsListWrapper>(json);
+            var data = JsonUtility.FromJson<AvailableRoomsListWrapper>(json);
             UpdateRoomListUI(data.rooms);
         }
         catch (System.Exception ex)
         {
-            Debug.LogError($"[OnlineLobbyUI] Error parsing available rooms list: {ex}");
+            Debug.LogError($"[OnlineLobbyUI] Error parsing rooms: {ex}");
         }
     }
 
-    private void UpdateRoomListUI(System.Collections.Generic.List<AvailableRoomData> roomsList)
+    private void UpdateRoomListUI(List<AvailableRoomData> roomsList)
     {
         if (roomListContent == null) return;
 
-        // Xóa danh sách phòng cũ
-        foreach (Transform child in roomListContent)
-        {
-            Destroy(child.gameObject);
-        }
+        foreach (Transform child in roomListContent) Destroy(child.gameObject);
 
         TMP_FontAsset font = GetFont();
 
         if (roomsList == null || roomsList.Count == 0)
         {
-            GameObject emptyLabelGo = new GameObject("EmptyLabel", typeof(RectTransform), typeof(TextMeshProUGUI));
-            emptyLabelGo.transform.SetParent(roomListContent, false);
-            
-            TextMeshProUGUI tmp = emptyLabelGo.GetComponent<TextMeshProUGUI>();
+            var emptyGo = new GameObject("EmptyLabel", typeof(RectTransform), typeof(TextMeshProUGUI));
+            emptyGo.transform.SetParent(roomListContent, false);
+            var tmp = emptyGo.GetComponent<TextMeshProUGUI>();
             tmp.font = font;
-            tmp.text = "No active rooms found.\nCreate a room to start!";
+            tmp.text = "No public rooms.\nCreate one to get started!";
             tmp.fontSize = 14;
             tmp.fontStyle = FontStyles.Italic;
             tmp.alignment = TextAlignmentOptions.Center;
@@ -538,233 +455,217 @@ public class OnlineLobbyUI : MonoBehaviour
         {
             if (roomItemPrefab != null)
             {
-                // Dùng Prefab nếu lập trình viên gán sẵn trong Inspector
-                GameObject item = Instantiate(roomItemPrefab, roomListContent);
+                var item = Instantiate(roomItemPrefab, roomListContent);
                 item.SetActive(true);
-
-                TextMeshProUGUI labelTmp = item.GetComponentInChildren<TextMeshProUGUI>();
-                if (labelTmp != null)
-                {
-                    labelTmp.text = $"{room.creatorName} ({room.roomId})";
-                }
-
-                Button joinBtn = item.GetComponentInChildren<Button>();
+                var labelTmp = item.GetComponentInChildren<TextMeshProUGUI>();
+                if (labelTmp != null) labelTmp.text = $"{room.creatorName}";
+                var joinBtn = item.GetComponentInChildren<Button>();
                 if (joinBtn != null)
                 {
-                    string targetRoomId = room.roomId;
+                    string id = room.roomId;
                     joinBtn.onClick.RemoveAllListeners();
-                    joinBtn.onClick.AddListener(() => {
+                    joinBtn.onClick.AddListener(() =>
+                    {
                         if (SocketManager.Instance != null && SocketManager.Instance.IsConnected)
                         {
-                            if (statusText != null) statusText.text = $"Joining room {targetRoomId}...";
-                            SocketManager.Instance.JoinRoom(targetRoomId);
+                            if (statusText != null) statusText.text = $"Joining room {id}...";
+                            SocketManager.Instance.JoinRoom(id);
                         }
                     });
                 }
             }
             else
             {
-                // Dự phòng: Tự tạo dòng phòng bằng code nếu không gán Prefab
-                GameObject item = new GameObject("RoomItem_" + room.roomId, typeof(RectTransform), typeof(CanvasRenderer), typeof(Image), typeof(HorizontalLayoutGroup));
+                // Fallback: tạo item bằng code
+                var item = new GameObject("Room_" + room.roomId, typeof(RectTransform), typeof(CanvasRenderer), typeof(Image), typeof(HorizontalLayoutGroup));
                 item.transform.SetParent(roomListContent, false);
-
-                RectTransform itemRt = item.GetComponent<RectTransform>();
-                itemRt.sizeDelta = new Vector2(340, 50);
-
-                Image itemBg = item.GetComponent<Image>();
-                itemBg.color = new Color(0.18f, 0.2f, 0.28f, 1f);
-
-                HorizontalLayoutGroup hlg = item.GetComponent<HorizontalLayoutGroup>();
-                hlg.padding = new RectOffset(15, 15, 5, 5);
-                hlg.spacing = 10f;
+                var itemRt = item.GetComponent<RectTransform>(); itemRt.sizeDelta = new Vector2(340, 50);
+                var itemBg = item.GetComponent<Image>(); itemBg.color = new Color(0.098f, 0.094f, 0.090f, 0.902f);
+                var hlg = item.GetComponent<HorizontalLayoutGroup>();
+                hlg.padding = new RectOffset(15, 15, 5, 5); hlg.spacing = 10f;
                 hlg.childAlignment = TextAnchor.MiddleCenter;
-                hlg.childControlHeight = true;
-                hlg.childControlWidth = true;
-                hlg.childForceExpandHeight = false;
-                hlg.childForceExpandWidth = false;
+                hlg.childControlHeight = true; hlg.childControlWidth = true;
 
-                GameObject labelGo = new GameObject("DetailsText", typeof(RectTransform), typeof(TextMeshProUGUI), typeof(LayoutElement));
+                var labelGo = new GameObject("Name", typeof(RectTransform), typeof(TextMeshProUGUI), typeof(LayoutElement));
                 labelGo.transform.SetParent(item.transform, false);
-                
-                LayoutElement textLe = labelGo.GetComponent<LayoutElement>();
-                textLe.flexibleWidth = 1f;
+                labelGo.GetComponent<LayoutElement>().flexibleWidth = 1f;
+                var labelTmp = labelGo.GetComponent<TextMeshProUGUI>();
+                labelTmp.font = font; labelTmp.text = room.creatorName; labelTmp.fontSize = 14;
+                labelTmp.fontStyle = FontStyles.Bold; labelTmp.alignment = TextAlignmentOptions.Left;
+                labelTmp.color = Color.white; labelTmp.verticalAlignment = VerticalAlignmentOptions.Middle;
 
-                TextMeshProUGUI labelTmp = labelGo.GetComponent<TextMeshProUGUI>();
-                labelTmp.font = font;
-                labelTmp.text = $"{room.creatorName} ({room.roomId})";
-                labelTmp.fontSize = 14;
-                labelTmp.fontStyle = FontStyles.Bold;
-                labelTmp.alignment = TextAlignmentOptions.Left;
-                labelTmp.color = Color.white;
-                labelTmp.verticalAlignment = VerticalAlignmentOptions.Middle;
+                var joinBtn = CreateButton(item.transform, "JOIN", font, Vector2.zero, new Vector2(80, 36), new Color(0.2f, 0.45f, 0.75f, 1f));
+                var le = joinBtn.gameObject.AddComponent<LayoutElement>(); le.preferredWidth = 80f; le.preferredHeight = 36f;
+                var btnTxt = joinBtn.GetComponentInChildren<TextMeshProUGUI>(); if (btnTxt != null) btnTxt.fontSize = 12;
 
-                Button joinBtn = CreateButton(item.transform, "JOIN", font, Vector2.zero, new Vector2(80, 36), new Color(0.2f, 0.45f, 0.75f, 1f));
-                LayoutElement btnLe = joinBtn.gameObject.AddComponent<LayoutElement>();
-                btnLe.preferredWidth = 80f;
-                btnLe.preferredHeight = 36f;
-
-                TextMeshProUGUI btnTxt = joinBtn.GetComponentInChildren<TextMeshProUGUI>();
-                if (btnTxt != null) btnTxt.fontSize = 12;
-
-                string targetRoomId = room.roomId;
-                joinBtn.onClick.AddListener(() => {
+                string targetId = room.roomId;
+                joinBtn.onClick.AddListener(() =>
+                {
                     if (SocketManager.Instance != null && SocketManager.Instance.IsConnected)
                     {
-                        if (statusText != null) statusText.text = $"Joining room {targetRoomId}...";
-                        SocketManager.Instance.JoinRoom(targetRoomId);
+                        if (statusText != null) statusText.text = $"Joining {targetId}...";
+                        SocketManager.Instance.JoinRoom(targetId);
                     }
                 });
             }
         }
     }
 
-    // ------------------------------------------------
-    // Button Handlers / Public Methods (Gán sự kiện từ Inspector)
-    // ------------------------------------------------
+    // -------------------------------------------------------
+    // Button Click Handlers
+    // -------------------------------------------------------
 
-    public void OnCreateRoomClicked()
+    private void OnCreatePublicClicked() => CreateRoom(false);
+    private void OnCreatePrivateClicked() => CreateRoom(true);
+
+    private void CreateRoom(bool isPrivate)
     {
         if (SocketManager.Instance == null || !SocketManager.Instance.IsConnected)
         {
-            if (statusText != null)
-                statusText.text = "<color=#FF6B6B>Not connected to server!</color>";
+            if (statusText != null) statusText.text = "<color=#FF6B6B>Not connected to server!</color>";
             return;
         }
-
-        if (statusText != null)
-            statusText.text = "Creating room...";
-
-        SocketManager.Instance.CreateRoom();
+        if (statusText != null) statusText.text = isPrivate ? "Creating private room..." : "Creating public room...";
+        _currentRoomIsPrivate = isPrivate;
+        SocketManager.Instance.CreateRoom(isPrivate);
     }
 
-    public void OnJoinRoomClicked()
+    private void OnSubmitPrivateJoinClicked()
     {
         if (SocketManager.Instance == null || !SocketManager.Instance.IsConnected)
         {
-            if (statusText != null)
-                statusText.text = "<color=#FF6B6B>Not connected to server!</color>";
+            if (statusText != null) statusText.text = "<color=#FF6B6B>Not connected!</color>";
             return;
         }
-
         string roomId = roomIdInput != null ? roomIdInput.text.Trim().ToUpper() : "";
         if (string.IsNullOrEmpty(roomId))
         {
-            if (statusText != null)
-                statusText.text = "<color=#FF6B6B>Please enter a Room Code!</color>";
+            if (statusText != null) statusText.text = "<color=#FF6B6B>Please enter a Room Code!</color>";
             return;
         }
-
-        if (statusText != null)
-            statusText.text = $"Joining room {roomId}...";
-
+        if (statusText != null) statusText.text = $"Joining room {roomId}...";
         SocketManager.Instance.JoinRoom(roomId);
     }
 
-    public void OnBackClicked()
+    private void OnBackToMenuClicked()
     {
-        if (SocketManager.Instance != null)
-        {
-            SocketManager.Instance.Disconnect();
-        }
-
+        if (SocketManager.Instance != null) SocketManager.Instance.Disconnect();
         HideLobby();
-
         GameMenu gameMenu = FindObjectOfType<GameMenu>();
         if (gameMenu != null)
         {
             gameMenu.BackToMainMenuFromDifficultyMenu();
-
             if (gameMenu.titleMenuPanel != null) gameMenu.titleMenuPanel.SetActive(true);
             if (gameMenu.logoImage != null) gameMenu.logoImage.SetActive(true);
         }
     }
 
-    public void OnCancelWaitClicked()
+    private void OnCancelWaitClicked()
     {
-        if (SocketManager.Instance != null)
-        {
-            SocketManager.Instance.LeaveRoom();
-        }
-
-        if (waitingPanel != null)
-        {
-            waitingPanel.SetActive(false);
-        }
-
-        ShowSelectionScreen();
+        if (SocketManager.Instance != null) SocketManager.Instance.LeaveRoom();
+        if (waitingPanel != null) waitingPanel.SetActive(false);
+        ShowSelectionPanel();
     }
 
-    public void OnRefreshRoomsClicked()
+    private void OnRefreshRoomsClicked()
     {
         if (SocketManager.Instance != null && SocketManager.Instance.IsConnected)
-        {
             SocketManager.Instance.GetAvailableRooms();
-        }
     }
 
-    // ------------------------------------------------
-    // UI Factory Helpers (Phục vụ phần sinh phòng công khai)
-    // ------------------------------------------------
+    // -------------------------------------------------------
+    // Online Game Startup
+    // -------------------------------------------------------
+
+    private bool HasBoardPieces()
+    {
+        if (GameManager.Instance == null || GameManager.Instance.pieceBoard == null) return false;
+        foreach (ChessPiece piece in GameManager.Instance.pieceBoard) if (piece != null) return true;
+        return false;
+    }
+
+    private IEnumerator StartOnlineGame(System.Action onSceneLoaded)
+    {
+        bool loadedScene = SceneManager.GetActiveScene().name != "PvPOff";
+        if (loadedScene) SceneManager.LoadScene("PvPOff");
+
+        float timeout = 5f;
+        while (timeout > 0f)
+        {
+            GameManager gm = GameManager.Get();
+            if (gm != null && (!loadedScene || HasBoardPieces())) break;
+            yield return null;
+            timeout -= Time.deltaTime;
+        }
+
+        GameManager gameManager = GameManager.Get();
+        if (gameManager == null) { Debug.LogError("[OnlineLobbyUI] GameManager not found!"); yield break; }
+
+        if (loadedScene) { gameManager.currentGameMode = GameMode.Online; gameManager.currentTurn = PieceColor.White; gameManager.UpdatePieceColliders(); }
+        else gameManager.PrepareForOnlineGame();
+
+        if (CameraSwitcher.Instance != null && SocketManager.Instance != null)
+            CameraSwitcher.Instance.SetCameraFor(SocketManager.Instance.assignedColor);
+
+        GameMenu gameMenu = FindObjectOfType<GameMenu>();
+        if (gameMenu != null)
+        {
+            if (gameMenu.titleMenuPanel != null) gameMenu.titleMenuPanel.SetActive(false);
+            if (gameMenu.menuPanel != null) gameMenu.menuPanel.SetActive(false);
+            if (gameMenu.logoImage != null) gameMenu.logoImage.SetActive(false);
+            if (gameMenu.backButtonLayer != null) gameMenu.backButtonLayer.SetActive(false);
+            if (gameMenu.settingsPanel != null) gameMenu.settingsPanel.SetActive(false);
+            if (gameMenu.logoutButton != null) gameMenu.logoutButton.SetActive(true);
+            if (gameMenu.pauseButton != null) gameMenu.pauseButton.SetActive(true);
+            if (gameMenu.pauseMenuManager != null) gameMenu.pauseMenuManager.SetPauseInputEnabled(true);
+            if (gameMenu.easyModeOnlyUI != null)
+                foreach (GameObject uiElement in gameMenu.easyModeOnlyUI)
+                    if (uiElement != null) uiElement.SetActive(false);
+        }
+
+        onSceneLoaded?.Invoke();
+        if (GameManager.Instance != null) GameManager.Instance.UpdatePieceColliders();
+    }
+
+    // -------------------------------------------------------
+    // Utilities
+    // -------------------------------------------------------
+
+    private void EnsureSocketManager()
+    {
+        if (SocketManager.Instance == null)
+        {
+            var smGo = new GameObject("SocketManager");
+            smGo.AddComponent<SocketManager>();
+        }
+    }
 
     private TMP_FontAsset GetFont()
     {
         if (cachedFont != null) return cachedFont;
-
-        TextMeshProUGUI[] tmps = FindObjectsOfType<TextMeshProUGUI>(true);
-        foreach (var tmp in tmps)
-        {
-            if (tmp != null && tmp.font != null)
-            {
-                cachedFont = tmp.font;
-                return cachedFont;
-            }
-        }
-
+        foreach (var tmp in FindObjectsOfType<TextMeshProUGUI>(true))
+            if (tmp != null && tmp.font != null) { cachedFont = tmp.font; return cachedFont; }
         cachedFont = TMP_Settings.defaultFontAsset;
         return cachedFont;
     }
 
-    private Button CreateButton(Transform parent, string label, TMP_FontAsset font,
-                                 Vector2 position, Vector2 size, Color bgColor)
+    private Button CreateButton(Transform parent, string label, TMP_FontAsset font, Vector2 position, Vector2 size, Color bgColor)
     {
-        GameObject go = new GameObject("Btn_" + label.Replace(" ", ""), typeof(RectTransform), typeof(CanvasRenderer), typeof(Image), typeof(Button));
+        var go = new GameObject("Btn_" + label.Replace(" ", ""), typeof(RectTransform), typeof(CanvasRenderer), typeof(Image), typeof(Button));
         go.transform.SetParent(parent, false);
-
-        RectTransform rt = go.GetComponent<RectTransform>();
-        rt.anchorMin = new Vector2(0.5f, 0.5f);
-        rt.anchorMax = new Vector2(0.5f, 0.5f);
-        rt.pivot = new Vector2(0.5f, 0.5f);
-        rt.sizeDelta = size;
-        rt.anchoredPosition = position;
-
-        Image img = go.GetComponent<Image>();
-        img.color = bgColor;
-        img.raycastTarget = true; // Rất quan trọng để Button có thể click được!
-
-        Button btn = go.GetComponent<Button>();
-        ColorBlock colors = btn.colors;
-        colors.highlightedColor = new Color(bgColor.r + 0.1f, bgColor.g + 0.1f, bgColor.b + 0.1f, 1f);
-        colors.pressedColor = new Color(bgColor.r - 0.1f, bgColor.g - 0.1f, bgColor.b - 0.1f, 1f);
-        btn.colors = colors;
-
-        GameObject textGo = new GameObject("Text", typeof(RectTransform), typeof(TextMeshProUGUI));
+        var rt = go.GetComponent<RectTransform>();
+        rt.anchorMin = rt.anchorMax = rt.pivot = new Vector2(0.5f, 0.5f);
+        rt.sizeDelta = size; rt.anchoredPosition = position;
+        var img = go.GetComponent<Image>(); img.color = bgColor; img.raycastTarget = true;
+        var btn = go.GetComponent<Button>();
+        var c = btn.colors; c.highlightedColor = new Color(bgColor.r + 0.1f, bgColor.g + 0.1f, bgColor.b + 0.1f, 1f);
+        c.pressedColor = new Color(bgColor.r - 0.1f, bgColor.g - 0.1f, bgColor.b - 0.1f, 1f); btn.colors = c;
+        var textGo = new GameObject("Text", typeof(RectTransform), typeof(TextMeshProUGUI));
         textGo.transform.SetParent(go.transform, false);
-
-        RectTransform textRt = textGo.GetComponent<RectTransform>();
-        textRt.anchorMin = Vector2.zero;
-        textRt.anchorMax = Vector2.one;
-        textRt.sizeDelta = Vector2.zero;
-        textRt.anchoredPosition = Vector2.zero;
-
-        TextMeshProUGUI textTmp = textGo.GetComponent<TextMeshProUGUI>();
-        textTmp.font = font;
-        textTmp.text = label;
-        textTmp.fontSize = 18;
-        textTmp.fontStyle = FontStyles.Bold;
-        textTmp.alignment = TextAlignmentOptions.Center;
-        textTmp.color = Color.white;
-        textTmp.raycastTarget = false;
-
+        var textRt = textGo.GetComponent<RectTransform>(); textRt.anchorMin = Vector2.zero; textRt.anchorMax = Vector2.one; textRt.sizeDelta = Vector2.zero;
+        var textTmp = textGo.GetComponent<TextMeshProUGUI>();
+        textTmp.font = font; textTmp.text = label; textTmp.fontSize = 18; textTmp.fontStyle = FontStyles.Bold;
+        textTmp.alignment = TextAlignmentOptions.Center; textTmp.color = Color.white; textTmp.raycastTarget = false;
         return btn;
     }
 }
