@@ -426,6 +426,19 @@ function getOpponentId(room, playerId) {
   return null;
 }
 
+function broadcastAvailableRooms() {
+  const availableRooms = [];
+  for (const [roomId, room] of rooms.entries()) {
+    if (room.status === 'waiting') {
+      availableRooms.push({
+        roomId: room.roomId,
+        creatorName: room.whiteName
+      });
+    }
+  }
+  io.emit("availableRoomsList", JSON.stringify({ rooms: availableRooms }));
+}
+
 function cleanupRoom(roomId) {
   const room = rooms.get(roomId);
   if (room) {
@@ -434,6 +447,7 @@ function cleanupRoom(roomId) {
     if (room.reconnectTimer) clearTimeout(room.reconnectTimer);
     rooms.delete(roomId);
     console.log(`🗑️ Room ${roomId} cleaned up. Active rooms: ${rooms.size}`);
+    broadcastAvailableRooms();
   }
 }
 
@@ -490,6 +504,34 @@ io.on("connection", (socket) => {
     console.log(`🔄 ${playerName} reconnected to room ${existingRoom.roomId}`);
   }
 
+  // --- GET AVAILABLE ROOMS ---
+  socket.on("getAvailableRooms", () => {
+    const availableRooms = [];
+    for (const [rId, rm] of rooms.entries()) {
+      if (rm.status === 'waiting') {
+        availableRooms.push({
+          roomId: rm.roomId,
+          creatorName: rm.whiteName
+        });
+      }
+    }
+    socket.emit("availableRoomsList", JSON.stringify({ rooms: availableRooms }));
+  });
+
+  // Send initial room list on connection
+  {
+    const availableRooms = [];
+    for (const [rId, rm] of rooms.entries()) {
+      if (rm.status === 'waiting') {
+        availableRooms.push({
+          roomId: rm.roomId,
+          creatorName: rm.whiteName
+        });
+      }
+    }
+    socket.emit("availableRoomsList", JSON.stringify({ rooms: availableRooms }));
+  }
+
   // --- CREATE ROOM ---
   socket.on("createRoom", (data) => {
     // Ensure cleanup of any old room this player was in
@@ -513,6 +555,7 @@ io.on("connection", (socket) => {
     socket.join(roomId);
     socket.emit("roomCreated", JSON.stringify({ roomId }));
     console.log(`🏠 Room ${roomId} created by ${playerName} (white). Active rooms: ${rooms.size}`);
+    broadcastAvailableRooms();
   });
 
   // --- LEAVE ROOM ---
@@ -588,6 +631,7 @@ io.on("connection", (socket) => {
     }));
 
     console.log(`🎮 Game started in room ${roomId}: ${room.whiteName} vs ${room.blackName}`);
+    broadcastAvailableRooms();
   });
 
   // --- MOVE ---

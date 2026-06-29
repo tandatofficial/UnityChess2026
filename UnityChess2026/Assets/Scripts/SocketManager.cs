@@ -60,6 +60,7 @@ public class SocketManager : MonoBehaviour
     public event Action OnDisconnected;
     public event Action OnOpponentRequestedRematch;
     public event Action OnRematchAgreed;
+    public event Action<string> OnAvailableRoomsListReceived; // json string containing { rooms: [...] }
 
     private bool applicationQuitting = false;
     public string playerId { get; private set; }
@@ -411,11 +412,32 @@ public class SocketManager : MonoBehaviour
                 OnRematchAgreed?.Invoke();
             });
         });
+
+        // --- AVAILABLE ROOMS LIST ---
+        socket.On("availableRoomsList", (res) =>
+        {
+            EnqueueMainThread(() =>
+            {
+                string json = res.GetValue<string>();
+                Debug.Log($"🏠 Available rooms list: {json}");
+                OnAvailableRoomsListReceived?.Invoke(json);
+            });
+        });
     }
 
     // ------------------------------------------------
     // Public API
     // ------------------------------------------------
+
+    /// <summary>
+    /// Request the list of waiting rooms from the server.
+    /// </summary>
+    public void GetAvailableRooms()
+    {
+        if (socket == null || !socket.Connected) return;
+        socket.Emit("getAvailableRooms");
+        Debug.Log("📤 Requesting available rooms list...");
+    }
 
     /// <summary>
     /// Request the server to create a new room.

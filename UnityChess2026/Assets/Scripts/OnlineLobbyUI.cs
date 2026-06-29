@@ -43,6 +43,8 @@ public class OnlineLobbyUI : MonoBehaviour
     private Button joinRoomButton;
     private Button backButton;
     private Button cancelWaitButton;
+    private GameObject roomListContent;
+    private Button refreshRoomsButton;
 
     // Font reference
     private TMP_FontAsset cachedFont;
@@ -198,6 +200,7 @@ public class OnlineLobbyUI : MonoBehaviour
         SocketManager.Instance.OnReconnectFailed += HandleReconnectFailed;
         SocketManager.Instance.OnConnected += HandleConnected;
         SocketManager.Instance.OnDisconnected += HandleDisconnected;
+        SocketManager.Instance.OnAvailableRoomsListReceived += HandleAvailableRoomsListReceived;
     }
 
     private void UnsubscribeEvents()
@@ -214,6 +217,7 @@ public class OnlineLobbyUI : MonoBehaviour
         SocketManager.Instance.OnReconnectFailed -= HandleReconnectFailed;
         SocketManager.Instance.OnConnected -= HandleConnected;
         SocketManager.Instance.OnDisconnected -= HandleDisconnected;
+        SocketManager.Instance.OnAvailableRoomsListReceived -= HandleAvailableRoomsListReceived;
     }
 
     // ------------------------------------------------
@@ -226,6 +230,10 @@ public class OnlineLobbyUI : MonoBehaviour
         if (statusText != null)
         {
             statusText.text = "<color=#55FF55>Connected to server!</color>";
+        }
+        if (SocketManager.Instance != null)
+        {
+            SocketManager.Instance.GetAvailableRooms();
         }
     }
 
@@ -436,6 +444,120 @@ public class OnlineLobbyUI : MonoBehaviour
         }
     }
 
+    [System.Serializable]
+    private class AvailableRoomData
+    {
+        public string roomId;
+        public string creatorName;
+    }
+
+    [System.Serializable]
+    private class AvailableRoomsListWrapper
+    {
+        public System.Collections.Generic.List<AvailableRoomData> rooms;
+    }
+
+    private void HandleAvailableRoomsListReceived(string json)
+    {
+        Debug.Log($"[OnlineLobbyUI] Received available rooms: {json}");
+        try
+        {
+            AvailableRoomsListWrapper data = JsonUtility.FromJson<AvailableRoomsListWrapper>(json);
+            UpdateRoomListUI(data.rooms);
+        }
+        catch (System.Exception ex)
+        {
+            Debug.LogError($"[OnlineLobbyUI] Error parsing available rooms list: {ex}");
+        }
+    }
+
+    private void UpdateRoomListUI(System.Collections.Generic.List<AvailableRoomData> roomsList)
+    {
+        if (roomListContent == null) return;
+
+        // Clear existing room items
+        foreach (Transform child in roomListContent.transform)
+        {
+            Destroy(child.gameObject);
+        }
+
+        TMP_FontAsset font = GetFont();
+
+        if (roomsList == null || roomsList.Count == 0)
+        {
+            // Show a label saying "No active rooms. Create one!"
+            GameObject emptyLabelGo = new GameObject("EmptyLabel", typeof(RectTransform), typeof(TextMeshProUGUI));
+            emptyLabelGo.transform.SetParent(roomListContent.transform, false);
+            
+            TextMeshProUGUI tmp = emptyLabelGo.GetComponent<TextMeshProUGUI>();
+            tmp.font = font;
+            tmp.text = "No active rooms found.\nCreate a room to start!";
+            tmp.fontSize = 14;
+            tmp.fontStyle = FontStyles.Italic;
+            tmp.alignment = TextAlignmentOptions.Center;
+            tmp.color = new Color(0.6f, 0.6f, 0.6f, 0.7f);
+            return;
+        }
+
+        foreach (var room in roomsList)
+        {
+            // Create a container for the room item
+            GameObject item = new GameObject("RoomItem_" + room.roomId, typeof(RectTransform), typeof(CanvasRenderer), typeof(Image), typeof(HorizontalLayoutGroup));
+            item.transform.SetParent(roomListContent.transform, false);
+
+            RectTransform itemRt = item.GetComponent<RectTransform>();
+            itemRt.sizeDelta = new Vector2(340, 50);
+
+            Image itemBg = item.GetComponent<Image>();
+            itemBg.color = new Color(0.18f, 0.2f, 0.28f, 1f); // Nice bluish grey background for row
+
+            HorizontalLayoutGroup hlg = item.GetComponent<HorizontalLayoutGroup>();
+            hlg.padding = new RectOffset(15, 15, 5, 5);
+            hlg.spacing = 10f;
+            hlg.childAlignment = TextAnchor.MiddleCenter;
+            hlg.childControlHeight = true;
+            hlg.childControlWidth = true;
+            hlg.childForceExpandHeight = false;
+            hlg.childForceExpandWidth = false;
+
+            // Room text details
+            GameObject labelGo = new GameObject("DetailsText", typeof(RectTransform), typeof(TextMeshProUGUI), typeof(LayoutElement));
+            labelGo.transform.SetParent(item.transform, false);
+            
+            LayoutElement textLe = labelGo.GetComponent<LayoutElement>();
+            textLe.flexibleWidth = 1f;
+
+            TextMeshProUGUI labelTmp = labelGo.GetComponent<TextMeshProUGUI>();
+            labelTmp.font = font;
+            labelTmp.text = $"{room.creatorName} ({room.roomId})";
+            labelTmp.fontSize = 14;
+            labelTmp.fontStyle = FontStyles.Bold;
+            labelTmp.alignment = TextAlignmentOptions.Left;
+            labelTmp.color = Color.white;
+            labelTmp.verticalAlignment = VerticalAlignmentOptions.Middle;
+
+            // Join Button
+            Button joinBtn = CreateButton(item.transform, "JOIN", font, Vector2.zero, new Vector2(80, 36), new Color(0.2f, 0.45f, 0.75f, 1f));
+            LayoutElement btnLe = joinBtn.gameObject.AddComponent<LayoutElement>();
+            btnLe.preferredWidth = 80f;
+            btnLe.preferredHeight = 36f;
+
+            // Since our CreateButton helper makes a child TextMeshProUGUI, we can change its font size
+            TextMeshProUGUI btnTxt = joinBtn.GetComponentInChildren<TextMeshProUGUI>();
+            if (btnTxt != null) btnTxt.fontSize = 12;
+
+            // Set up listener
+            string targetRoomId = room.roomId;
+            joinBtn.onClick.AddListener(() => {
+                if (SocketManager.Instance != null && SocketManager.Instance.IsConnected)
+                {
+                    if (statusText != null) statusText.text = $"Joining room {targetRoomId}...";
+                    SocketManager.Instance.JoinRoom(targetRoomId);
+                }
+            });
+        }
+    }
+
 
     // ------------------------------------------------
     // UI Creation
@@ -489,50 +611,92 @@ public class OnlineLobbyUI : MonoBehaviour
 
         lobbyPanel.transform.SetAsLastSibling();
 
-        // --- CARD CONTAINER ---
-        GameObject card = CreateCard(lobbyPanel.transform, 420f, 460f);
+        // ==========================================
+        // LEFT CARD: Host / Join Private
+        // ==========================================
+        GameObject leftCard = CreateCard(lobbyPanel.transform, 400f, 400f);
+        RectTransform leftRt = leftCard.GetComponent<RectTransform>();
+        leftRt.anchoredPosition = new Vector2(-220f, 20f);
 
-        float yOffset = 170f;
+        float leftY = 140f;
 
-        // --- TITLE ---
-        CreateLabel(card.transform, "♟ PLAY ONLINE", font, 28, FontStyles.Bold,
-                    new Vector2(0, yOffset), Color.white);
-        yOffset -= 60f;
+        // Title
+        CreateLabel(leftCard.transform, "♟ MULTIPLAYER", font, 24, FontStyles.Bold,
+                    new Vector2(0, leftY), Color.white);
+        leftY -= 60f;
 
-        // --- CREATE ROOM BUTTON ---
-        createRoomButton = CreateButton(card.transform, "CREATE ROOM", font,
-                                         new Vector2(0, yOffset), new Vector2(280, 50),
+        // Create Room Button
+        createRoomButton = CreateButton(leftCard.transform, "CREATE ROOM", font,
+                                         new Vector2(0, leftY), new Vector2(280, 50),
                                          new Color(0.2f, 0.65f, 0.45f, 1f));
         createRoomButton.onClick.AddListener(OnCreateRoomClicked);
-        yOffset -= 70f;
+        leftY -= 70f;
 
-        // --- SEPARATOR ---
-        CreateLabel(card.transform, "── or join a room ──", font, 14, FontStyles.Normal,
-                    new Vector2(0, yOffset), new Color(0.6f, 0.6f, 0.6f, 0.8f));
-        yOffset -= 50f;
+        // Separator
+        CreateLabel(leftCard.transform, "── or join private room ──", font, 12, FontStyles.Normal,
+                    new Vector2(0, leftY), new Color(0.6f, 0.6f, 0.6f, 0.8f));
+        leftY -= 50f;
 
-        // --- ROOM ID INPUT ---
-        roomIdInput = CreateInputField(card.transform, "Enter Room Code...", font,
-                                        new Vector2(0, yOffset), new Vector2(280, 50));
-        yOffset -= 65f;
+        // Room ID Input
+        roomIdInput = CreateInputField(leftCard.transform, "Enter Room Code...", font,
+                                        new Vector2(0, leftY), new Vector2(280, 45));
+        leftY -= 60f;
 
-        // --- JOIN ROOM BUTTON ---
-        joinRoomButton = CreateButton(card.transform, "JOIN ROOM", font,
-                                       new Vector2(0, yOffset), new Vector2(280, 50),
+        // Join Room Button
+        joinRoomButton = CreateButton(leftCard.transform, "JOIN ROOM", font,
+                                       new Vector2(0, leftY), new Vector2(280, 45),
                                        new Color(0.25f, 0.48f, 0.85f, 1f));
         joinRoomButton.onClick.AddListener(OnJoinRoomClicked);
-        yOffset -= 70f;
 
-        // --- STATUS TEXT ---
-        statusText = CreateLabel(card.transform, "", font, 14, FontStyles.Normal,
-                                  new Vector2(0, yOffset), new Color(0.9f, 0.9f, 0.5f, 1f));
-        yOffset -= 50f;
 
-        // --- BACK BUTTON ---
-        backButton = CreateButton(card.transform, "← BACK", font,
-                                   new Vector2(0, yOffset), new Vector2(200, 45),
+        // ==========================================
+        // RIGHT CARD: Public Rooms List
+        // ==========================================
+        GameObject rightCard = CreateCard(lobbyPanel.transform, 400f, 400f);
+        RectTransform rightRt = rightCard.GetComponent<RectTransform>();
+        rightRt.anchoredPosition = new Vector2(220f, 20f);
+
+        float rightY = 140f;
+
+        // Title
+        CreateLabel(rightCard.transform, "🌐 PUBLIC ROOMS", font, 24, FontStyles.Bold,
+                    new Vector2(-30f, rightY), Color.white);
+
+        // Refresh Button (top-right of card)
+        refreshRoomsButton = CreateButton(rightCard.transform, "REFRESH", font,
+                                           new Vector2(120f, rightY), new Vector2(90, 30),
+                                           new Color(0.35f, 0.35f, 0.4f, 1f));
+        TextMeshProUGUI refreshText = refreshRoomsButton.GetComponentInChildren<TextMeshProUGUI>();
+        if (refreshText != null) refreshText.fontSize = 11;
+        refreshRoomsButton.onClick.AddListener(() => {
+            if (SocketManager.Instance != null && SocketManager.Instance.IsConnected)
+            {
+                SocketManager.Instance.GetAvailableRooms();
+            }
+        });
+
+        // Scroll Area
+        roomListContent = CreateScrollArea(rightCard.transform, new Vector2(0f, -40f), new Vector2(360f, 280f));
+
+
+        // ==========================================
+        // COMMON BOTTOM AREA
+        // ==========================================
+        // Status Text
+        statusText = CreateLabel(lobbyPanel.transform, "", font, 14, FontStyles.Normal,
+                                  new Vector2(0, -180f), new Color(0.9f, 0.9f, 0.5f, 1f));
+
+        // Back Button
+        backButton = CreateButton(lobbyPanel.transform, "← BACK", font,
+                                   new Vector2(0, -230f), new Vector2(200, 45),
                                    new Color(0.35f, 0.35f, 0.4f, 1f));
         backButton.onClick.AddListener(OnBackClicked);
+
+        // Request initial list immediately
+        if (SocketManager.Instance != null && SocketManager.Instance.IsConnected)
+        {
+            SocketManager.Instance.GetAvailableRooms();
+        }
     }
 
     private void ShowWaitingScreen(string roomId)
@@ -843,5 +1007,64 @@ public class OnlineLobbyUI : MonoBehaviour
         });
 
         return inputField;
+    }
+
+    private GameObject CreateScrollArea(Transform parent, Vector2 position, Vector2 size)
+    {
+        // 1. ScrollRoot
+        GameObject scrollRoot = new GameObject("ScrollRoot", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image), typeof(ScrollRect));
+        scrollRoot.transform.SetParent(parent, false);
+        
+        RectTransform rootRt = scrollRoot.GetComponent<RectTransform>();
+        rootRt.anchorMin = new Vector2(0.5f, 0.5f);
+        rootRt.anchorMax = new Vector2(0.5f, 0.5f);
+        rootRt.pivot = new Vector2(0.5f, 0.5f);
+        rootRt.sizeDelta = size;
+        rootRt.anchoredPosition = position;
+
+        Image bgImage = scrollRoot.GetComponent<Image>();
+        bgImage.color = new Color(0.08f, 0.09f, 0.13f, 1f); // Darker inside scroll area
+
+        ScrollRect scrollRect = scrollRoot.GetComponent<ScrollRect>();
+        scrollRect.horizontal = false;
+        scrollRect.vertical = true;
+        scrollRect.movementType = ScrollRect.MovementType.Clamped;
+
+        // 2. Viewport
+        GameObject viewport = new GameObject("Viewport", typeof(RectTransform), typeof(CanvasRenderer), typeof(RectMask2D));
+        viewport.transform.SetParent(scrollRoot.transform, false);
+        
+        RectTransform viewRt = viewport.GetComponent<RectTransform>();
+        viewRt.anchorMin = Vector2.zero;
+        viewRt.anchorMax = Vector2.one;
+        viewRt.sizeDelta = Vector2.zero; // Stretch
+
+        // 3. Content
+        GameObject content = new GameObject("Content", typeof(RectTransform), typeof(VerticalLayoutGroup), typeof(ContentSizeFitter));
+        content.transform.SetParent(viewport.transform, false);
+
+        RectTransform contentRt = content.GetComponent<RectTransform>();
+        contentRt.anchorMin = new Vector2(0f, 1f); // Top left anchor for vertical scrolling
+        contentRt.anchorMax = new Vector2(1f, 1f);
+        contentRt.pivot = new Vector2(0.5f, 1f);
+        contentRt.sizeDelta = new Vector2(0f, 0f);
+
+        VerticalLayoutGroup vlg = content.GetComponent<VerticalLayoutGroup>();
+        vlg.padding = new RectOffset(10, 10, 10, 10);
+        vlg.spacing = 5f;
+        vlg.childAlignment = TextAnchor.UpperCenter;
+        vlg.childControlHeight = false;
+        vlg.childControlWidth = true;
+        vlg.childForceExpandHeight = false;
+        vlg.childForceExpandWidth = true;
+
+        ContentSizeFitter csf = content.GetComponent<ContentSizeFitter>();
+        csf.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
+        csf.horizontalFit = ContentSizeFitter.FitMode.Unconstrained;
+
+        scrollRect.viewport = viewRt;
+        scrollRect.content = contentRt;
+
+        return content;
     }
 }
