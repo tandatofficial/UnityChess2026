@@ -31,8 +31,9 @@ public class OnlineLobbyUI : MonoBehaviour
     [Header("Lobby State")]
     public bool isLobbyActive = false;
 
-    // UI Root
-    private GameObject lobbyPanel;
+    // UI Root Panels
+    private GameObject selectionPanel;
+    private GameObject joinPanel;
     private GameObject waitingPanel;
 
     // Lobby Controls
@@ -89,19 +90,21 @@ public class OnlineLobbyUI : MonoBehaviour
 
         // --- CLEANUP PHANTOM PANELS ---
         // Ensure no leftover panels from previous scene loads exist
-        if (lobbyPanel != null) Destroy(lobbyPanel);
+        if (selectionPanel != null) Destroy(selectionPanel);
+        if (joinPanel != null) Destroy(joinPanel);
         if (waitingPanel != null) Destroy(waitingPanel);
         
         GameObject[] oldLobbies = GameObject.FindGameObjectsWithTag("Untagged");
         foreach (var go in oldLobbies)
         {
-            if (go.name == "OnlineLobbyPanel" || go.name == "WaitingPanel")
+            if (go.name == "OnlineLobbyPanel" || go.name == "OnlineSelectionPanel" || go.name == "OnlineJoinPanel" || go.name == "WaitingPanel")
             {
                 Destroy(go);
             }
         }
 
-        lobbyPanel = null;
+        selectionPanel = null;
+        joinPanel = null;
         waitingPanel = null;
 
         // Ensure connected to server
@@ -117,9 +120,10 @@ public class OnlineLobbyUI : MonoBehaviour
 
         EnsureSocketManager();
         SubscribeEvents();
-        CreateLobbyUI();
+        CreateSelectionUI();
 
-        if (lobbyPanel != null) lobbyPanel.SetActive(true);
+        if (selectionPanel != null) selectionPanel.SetActive(true);
+        if (joinPanel != null) joinPanel.SetActive(false);
         if (waitingPanel != null) waitingPanel.SetActive(false);
 
         if (SocketManager.Instance != null)
@@ -152,10 +156,12 @@ public class OnlineLobbyUI : MonoBehaviour
     {
         isLobbyActive = false;
 
-        if (lobbyPanel != null) Destroy(lobbyPanel);
+        if (selectionPanel != null) Destroy(selectionPanel);
+        if (joinPanel != null) Destroy(joinPanel);
         if (waitingPanel != null) Destroy(waitingPanel);
 
-        lobbyPanel = null;
+        selectionPanel = null;
+        joinPanel = null;
         waitingPanel = null;
     }
 
@@ -251,7 +257,8 @@ public class OnlineLobbyUI : MonoBehaviour
         Debug.Log($"[OnlineLobbyUI] Room created: {roomId}");
 
         // Switch to waiting screen
-        if (lobbyPanel != null) lobbyPanel.SetActive(false);
+        if (selectionPanel != null) selectionPanel.SetActive(false);
+        if (joinPanel != null) joinPanel.SetActive(false);
         ShowWaitingScreen(roomId);
     }
 
@@ -582,9 +589,9 @@ public class OnlineLobbyUI : MonoBehaviour
         return cachedFont;
     }
 
-    private void CreateLobbyUI()
+    private void CreateSelectionUI()
     {
-        if (lobbyPanel != null) return; // Already created
+        if (selectionPanel != null) return; // Already created
 
         Canvas canvas = FindObjectOfType<Canvas>();
         if (canvas == null)
@@ -596,75 +603,124 @@ public class OnlineLobbyUI : MonoBehaviour
         TMP_FontAsset font = GetFont();
 
         // --- OVERLAY BACKGROUND ---
-        lobbyPanel = new GameObject("OnlineLobbyPanel", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image));
-        lobbyPanel.transform.SetParent(canvas.transform, false);
+        selectionPanel = new GameObject("OnlineSelectionPanel", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image));
+        selectionPanel.transform.SetParent(canvas.transform, false);
 
-        RectTransform panelRt = lobbyPanel.GetComponent<RectTransform>();
+        RectTransform panelRt = selectionPanel.GetComponent<RectTransform>();
         panelRt.anchorMin = Vector2.zero;
         panelRt.anchorMax = Vector2.one;
         panelRt.sizeDelta = Vector2.zero;
         panelRt.anchoredPosition = Vector2.zero;
 
-        Image panelBg = lobbyPanel.GetComponent<Image>();
+        Image panelBg = selectionPanel.GetComponent<Image>();
         panelBg.color = new Color(0.05f, 0.06f, 0.1f, 0.95f);
         panelBg.raycastTarget = true;
 
-        lobbyPanel.transform.SetAsLastSibling();
+        selectionPanel.transform.SetAsLastSibling();
 
-        // ==========================================
-        // LEFT CARD: Host / Join Private
-        // ==========================================
-        GameObject leftCard = CreateCard(lobbyPanel.transform, 400f, 400f);
-        RectTransform leftRt = leftCard.GetComponent<RectTransform>();
-        leftRt.anchoredPosition = new Vector2(-220f, 20f);
-
-        float leftY = 140f;
+        // --- Selection Card ---
+        GameObject card = CreateCard(selectionPanel.transform, 400f, 320f);
+        float y = 90f;
 
         // Title
-        CreateLabel(leftCard.transform, "♟ MULTIPLAYER", font, 24, FontStyles.Bold,
-                    new Vector2(0, leftY), Color.white);
-        leftY -= 60f;
+        CreateLabel(card.transform, "♟ PLAY ONLINE", font, 26, FontStyles.Bold,
+                    new Vector2(0, y), Color.white);
+        y -= 65f;
 
-        // Create Room Button
-        createRoomButton = CreateButton(leftCard.transform, "CREATE ROOM", font,
-                                         new Vector2(0, leftY), new Vector2(280, 50),
+        // Host Button
+        createRoomButton = CreateButton(card.transform, "CREATE ROOM", font,
+                                         new Vector2(0, y), new Vector2(280, 50),
                                          new Color(0.2f, 0.65f, 0.45f, 1f));
         createRoomButton.onClick.AddListener(OnCreateRoomClicked);
-        leftY -= 70f;
+        y -= 65f;
 
-        // Separator
-        CreateLabel(leftCard.transform, "── or join private room ──", font, 12, FontStyles.Normal,
-                    new Vector2(0, leftY), new Color(0.6f, 0.6f, 0.6f, 0.8f));
-        leftY -= 50f;
-
-        // Room ID Input
-        roomIdInput = CreateInputField(leftCard.transform, "Enter Room Code...", font,
-                                        new Vector2(0, leftY), new Vector2(280, 45));
-        leftY -= 60f;
-
-        // Join Room Button
-        joinRoomButton = CreateButton(leftCard.transform, "JOIN ROOM", font,
-                                       new Vector2(0, leftY), new Vector2(280, 45),
+        // Join Button
+        joinRoomButton = CreateButton(card.transform, "JOIN ROOM", font,
+                                       new Vector2(0, y), new Vector2(280, 50),
                                        new Color(0.25f, 0.48f, 0.85f, 1f));
-        joinRoomButton.onClick.AddListener(OnJoinRoomClicked);
+        joinRoomButton.onClick.AddListener(ShowJoinScreen);
+        y -= 65f;
 
+        // Back Button
+        backButton = CreateButton(card.transform, "← BACK", font,
+                                   new Vector2(0, y), new Vector2(200, 40),
+                                   new Color(0.35f, 0.35f, 0.4f, 1f));
+        backButton.onClick.AddListener(OnBackClicked);
 
-        // ==========================================
-        // RIGHT CARD: Public Rooms List
-        // ==========================================
-        GameObject rightCard = CreateCard(lobbyPanel.transform, 400f, 400f);
-        RectTransform rightRt = rightCard.GetComponent<RectTransform>();
-        rightRt.anchoredPosition = new Vector2(220f, 20f);
+        // Status Label (attached to selectionPanel, centered at bottom)
+        statusText = CreateLabel(selectionPanel.transform, "", font, 14, FontStyles.Normal,
+                                  new Vector2(0, -180f), new Color(0.9f, 0.9f, 0.5f, 1f));
+    }
 
-        float rightY = 140f;
+    private void ShowJoinScreen()
+    {
+        if (selectionPanel != null) selectionPanel.SetActive(false);
+
+        if (joinPanel != null)
+        {
+            joinPanel.SetActive(true);
+            // Request room list refresh
+            if (SocketManager.Instance != null && SocketManager.Instance.IsConnected)
+            {
+                SocketManager.Instance.GetAvailableRooms();
+            }
+            return;
+        }
+
+        Canvas canvas = FindObjectOfType<Canvas>();
+        if (canvas == null) return;
+
+        TMP_FontAsset font = GetFont();
+
+        // --- OVERLAY BACKGROUND ---
+        joinPanel = new GameObject("OnlineJoinPanel", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image));
+        joinPanel.transform.SetParent(canvas.transform, false);
+
+        RectTransform panelRt = joinPanel.GetComponent<RectTransform>();
+        panelRt.anchorMin = Vector2.zero;
+        panelRt.anchorMax = Vector2.one;
+        panelRt.sizeDelta = Vector2.zero;
+        panelRt.anchoredPosition = Vector2.zero;
+
+        Image panelBg = joinPanel.GetComponent<Image>();
+        panelBg.color = new Color(0.05f, 0.06f, 0.1f, 0.95f);
+        panelBg.raycastTarget = true;
+
+        joinPanel.transform.SetAsLastSibling();
+
+        // --- Card container ---
+        GameObject card = CreateCard(joinPanel.transform, 500f, 520f);
+        float y = 210f;
 
         // Title
-        CreateLabel(rightCard.transform, "🌐 PUBLIC ROOMS", font, 24, FontStyles.Bold,
-                    new Vector2(-30f, rightY), Color.white);
+        CreateLabel(card.transform, "🌐 JOIN ROOM", font, 26, FontStyles.Bold,
+                    new Vector2(0, y), Color.white);
+        y -= 45f;
 
-        // Refresh Button (top-right of card)
-        refreshRoomsButton = CreateButton(rightCard.transform, "REFRESH", font,
-                                           new Vector2(120f, rightY), new Vector2(90, 30),
+        // Header for private room
+        CreateLabel(card.transform, "── Enter Room Code ──", font, 12, FontStyles.Normal,
+                    new Vector2(0, y), new Color(0.6f, 0.6f, 0.6f, 0.8f));
+        y -= 45f;
+
+        // Room ID Input
+        roomIdInput = CreateInputField(card.transform, "Enter Room Code...", font,
+                                        new Vector2(0, y), new Vector2(360, 45));
+        y -= 55f;
+
+        // Join Private Button
+        Button joinPrivateButton = CreateButton(card.transform, "JOIN PRIVATE ROOM", font,
+                                                 new Vector2(0, y), new Vector2(360, 45),
+                                                 new Color(0.25f, 0.48f, 0.85f, 1f));
+        joinPrivateButton.onClick.AddListener(OnJoinRoomClicked);
+        y -= 50f;
+
+        // Header for public rooms
+        CreateLabel(card.transform, "── or select a public room ──", font, 12, FontStyles.Normal,
+                    new Vector2(-50f, y), new Color(0.6f, 0.6f, 0.6f, 0.8f));
+
+        // Refresh Button next to header
+        refreshRoomsButton = CreateButton(card.transform, "REFRESH", font,
+                                           new Vector2(140f, y), new Vector2(90, 26),
                                            new Color(0.35f, 0.35f, 0.4f, 1f));
         TextMeshProUGUI refreshText = refreshRoomsButton.GetComponentInChildren<TextMeshProUGUI>();
         if (refreshText != null) refreshText.fontSize = 11;
@@ -674,25 +730,21 @@ public class OnlineLobbyUI : MonoBehaviour
                 SocketManager.Instance.GetAvailableRooms();
             }
         });
+        y -= 85f;
 
-        // Scroll Area
-        roomListContent = CreateScrollArea(rightCard.transform, new Vector2(0f, -40f), new Vector2(360f, 280f));
+        // Scroll Area for public rooms
+        roomListContent = CreateScrollArea(card.transform, new Vector2(0f, y), new Vector2(360f, 130f));
 
+        // Back Button to return to selection screen
+        Button backToSelectionButton = CreateButton(card.transform, "← BACK", font,
+                                                     new Vector2(0, -215f), new Vector2(160, 40),
+                                                     new Color(0.35f, 0.35f, 0.4f, 1f));
+        backToSelectionButton.onClick.AddListener(() => {
+            if (joinPanel != null) joinPanel.SetActive(false);
+            if (selectionPanel != null) selectionPanel.SetActive(true);
+        });
 
-        // ==========================================
-        // COMMON BOTTOM AREA
-        // ==========================================
-        // Status Text
-        statusText = CreateLabel(lobbyPanel.transform, "", font, 14, FontStyles.Normal,
-                                  new Vector2(0, -180f), new Color(0.9f, 0.9f, 0.5f, 1f));
-
-        // Back Button
-        backButton = CreateButton(lobbyPanel.transform, "← BACK", font,
-                                   new Vector2(0, -230f), new Vector2(200, 45),
-                                   new Color(0.35f, 0.35f, 0.4f, 1f));
-        backButton.onClick.AddListener(OnBackClicked);
-
-        // Request initial list immediately
+        // Request available rooms
         if (SocketManager.Instance != null && SocketManager.Instance.IsConnected)
         {
             SocketManager.Instance.GetAvailableRooms();
@@ -828,10 +880,10 @@ public class OnlineLobbyUI : MonoBehaviour
             waitingPanel = null;
         }
 
-        // Show lobby again
-        if (lobbyPanel != null)
+        // Show selectionPanel again
+        if (selectionPanel != null)
         {
-            lobbyPanel.SetActive(true);
+            selectionPanel.SetActive(true);
             if (statusText != null) statusText.text = "";
         }
         else
