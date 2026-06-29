@@ -3,11 +3,12 @@ using UnityEngine.UI;
 using UnityEngine.SceneManagement;
 using TMPro;
 using System.Collections;
+using System.Collections.Generic;
 
 /// <summary>
-/// Online Lobby UI — Manages room creation, joining, and waiting for opponent.
-/// This script creates its own UI programmatically and hooks into SocketManager events.
-/// Attach to an empty GameObject in the PvPOff scene, or it will be spawned dynamically by GameMenu.
+/// Online Lobby UI — Manages sảnh chờ trực tuyến.
+/// Thay vì tự tạo giao diện bằng code, phiên bản này cho phép gán trực tiếp các Panel, Button, InputField 
+/// trong Unity Editor để lập trình viên dễ dàng tùy chỉnh bố cục bằng tay.
 /// </summary>
 public class OnlineLobbyUI : MonoBehaviour
 {
@@ -31,23 +32,33 @@ public class OnlineLobbyUI : MonoBehaviour
     [Header("Lobby State")]
     public bool isLobbyActive = false;
 
-    // UI Root Panels
-    private GameObject selectionPanel;
-    private GameObject joinPanel;
-    private GameObject waitingPanel;
+    [Header("UI Panels (Gán từ Unity Editor)")]
+    [Tooltip("Panel toàn màn hình hiển thị lựa chọn (CREATE ROOM / JOIN ROOM / BACK)")]
+    public GameObject selectionPanel;
 
-    // Lobby Controls
-    private TMP_InputField roomIdInput;
-    private TextMeshProUGUI statusText;
-    private TextMeshProUGUI roomCodeDisplay;
-    private Button createRoomButton;
-    private Button joinRoomButton;
-    private Button backButton;
-    private Button cancelWaitButton;
-    private GameObject roomListContent;
-    private Button refreshRoomsButton;
+    [Tooltip("Panel toàn màn hình hiển thị nhập mã room và danh sách các public room")]
+    public GameObject joinPanel;
 
-    // Font reference
+    [Tooltip("Panel toàn màn hình hiển thị mã code của phòng trong lúc chờ đối thủ")]
+    public GameObject waitingPanel;
+
+    [Header("UI Controls (Gán từ Unity Editor)")]
+    public TMP_InputField roomIdInput;
+    public TextMeshProUGUI statusText;
+    public TextMeshProUGUI roomCodeDisplay;
+    public Button createRoomButton;
+    public Button joinRoomButton;
+    public Button backButton;
+    public Button cancelWaitButton;
+    public Button refreshRoomsButton;
+
+    [Header("Room List Settings")]
+    [Tooltip("Vùng chứa (Content) của ScrollRect để sinh các dòng phòng chờ")]
+    public RectTransform roomListContent;
+    [Tooltip("Prefab cho từng dòng phòng (Tùy chọn, nếu để trống sẽ tự tạo dòng mặc định bằng code)")]
+    public GameObject roomItemPrefab;
+
+    // Font reference để dự phòng khi tự sinh text
     private TMP_FontAsset cachedFont;
 
     private void Awake()
@@ -55,7 +66,7 @@ public class OnlineLobbyUI : MonoBehaviour
         if (_instance == null)
         {
             _instance = this;
-            transform.SetParent(null); // Ensure at root for DontDestroyOnLoad
+            transform.SetParent(null); // Đảm bảo nằm ở root để DontDestroyOnLoad hoạt động tốt
             DontDestroyOnLoad(gameObject);
         }
         else if (_instance != this)
@@ -69,6 +80,7 @@ public class OnlineLobbyUI : MonoBehaviour
     {
         EnsureSocketManager();
         SubscribeEvents();
+        SetupButtonListeners();
     }
 
     private void OnDestroy()
@@ -81,33 +93,24 @@ public class OnlineLobbyUI : MonoBehaviour
     }
 
     // ------------------------------------------------
-    // Public API
+    // Public API / Navigation
     // ------------------------------------------------
 
     public void ShowLobby()
     {
         isLobbyActive = true;
 
-        // --- CLEANUP PHANTOM PANELS ---
-        // Ensure no leftover panels from previous scene loads exist
-        if (selectionPanel != null) Destroy(selectionPanel);
-        if (joinPanel != null) Destroy(joinPanel);
-        if (waitingPanel != null) Destroy(waitingPanel);
-        
-        GameObject[] oldLobbies = GameObject.FindGameObjectsWithTag("Untagged");
-        foreach (var go in oldLobbies)
-        {
-            if (go.name == "OnlineLobbyPanel" || go.name == "OnlineSelectionPanel" || go.name == "OnlineJoinPanel" || go.name == "WaitingPanel")
-            {
-                Destroy(go);
-            }
-        }
+        EnsureSocketManager();
+        SubscribeEvents();
 
-        selectionPanel = null;
-        joinPanel = null;
-        waitingPanel = null;
+        // Ẩn hiện các Panel theo đúng trạng thái sảnh chờ chính
+        if (selectionPanel != null) selectionPanel.SetActive(true);
+        if (joinPanel != null) joinPanel.SetActive(false);
+        if (waitingPanel != null) waitingPanel.SetActive(false);
 
-        // Ensure connected to server
+        SetupButtonListeners();
+
+        // Tự động kết nối tới Server
         string playerName = "Player";
         if (AccountManager.Instance != null && AccountManager.Instance.IsLoggedIn)
         {
@@ -117,14 +120,6 @@ public class OnlineLobbyUI : MonoBehaviour
         {
             playerName = PlayerPrefs.GetString("loggedInUser", "Player_" + Random.Range(1000, 9999));
         }
-
-        EnsureSocketManager();
-        SubscribeEvents();
-        CreateSelectionUI();
-
-        if (selectionPanel != null) selectionPanel.SetActive(true);
-        if (joinPanel != null) joinPanel.SetActive(false);
-        if (waitingPanel != null) waitingPanel.SetActive(false);
 
         if (SocketManager.Instance != null)
         {
@@ -142,6 +137,34 @@ public class OnlineLobbyUI : MonoBehaviour
         }
     }
 
+    public void HideLobby()
+    {
+        isLobbyActive = false;
+
+        if (selectionPanel != null) selectionPanel.SetActive(false);
+        if (joinPanel != null) joinPanel.SetActive(false);
+        if (waitingPanel != null) waitingPanel.SetActive(false);
+    }
+
+    public void ShowJoinScreen()
+    {
+        if (selectionPanel != null) selectionPanel.SetActive(false);
+        if (joinPanel != null) joinPanel.SetActive(true);
+        if (waitingPanel != null) waitingPanel.SetActive(false);
+
+        if (SocketManager.Instance != null && SocketManager.Instance.IsConnected)
+        {
+            SocketManager.Instance.GetAvailableRooms();
+        }
+    }
+
+    public void ShowSelectionScreen()
+    {
+        if (selectionPanel != null) selectionPanel.SetActive(true);
+        if (joinPanel != null) joinPanel.SetActive(false);
+        if (waitingPanel != null) waitingPanel.SetActive(false);
+    }
+
     private void SetInteractable(bool state)
     {
         if (createRoomButton != null) createRoomButton.interactable = state;
@@ -149,20 +172,34 @@ public class OnlineLobbyUI : MonoBehaviour
         if (roomIdInput != null) roomIdInput.interactable = state;
     }
 
-    /// <summary>
-    /// Hide the lobby and clean up UI.
-    /// </summary>
-    public void HideLobby()
+    private void SetupButtonListeners()
     {
-        isLobbyActive = false;
-
-        if (selectionPanel != null) Destroy(selectionPanel);
-        if (joinPanel != null) Destroy(joinPanel);
-        if (waitingPanel != null) Destroy(waitingPanel);
-
-        selectionPanel = null;
-        joinPanel = null;
-        waitingPanel = null;
+        // Gán sự kiện cho các nút bấm bằng code (để phòng hờ lập trình viên quên kéo thả OnClick trong Unity Editor)
+        if (createRoomButton != null)
+        {
+            createRoomButton.onClick.RemoveListener(OnCreateRoomClicked);
+            createRoomButton.onClick.AddListener(OnCreateRoomClicked);
+        }
+        if (joinRoomButton != null)
+        {
+            joinRoomButton.onClick.RemoveListener(ShowJoinScreen);
+            joinRoomButton.onClick.AddListener(ShowJoinScreen);
+        }
+        if (backButton != null)
+        {
+            backButton.onClick.RemoveListener(OnBackClicked);
+            backButton.onClick.AddListener(OnBackClicked);
+        }
+        if (cancelWaitButton != null)
+        {
+            cancelWaitButton.onClick.RemoveListener(OnCancelWaitClicked);
+            cancelWaitButton.onClick.AddListener(OnCancelWaitClicked);
+        }
+        if (refreshRoomsButton != null)
+        {
+            refreshRoomsButton.onClick.RemoveListener(OnRefreshRoomsClicked);
+            refreshRoomsButton.onClick.AddListener(OnRefreshRoomsClicked);
+        }
     }
 
     private void EnsureSocketManager()
@@ -227,7 +264,7 @@ public class OnlineLobbyUI : MonoBehaviour
     }
 
     // ------------------------------------------------
-    // Event Handlers
+    // Event Handlers từ SocketManager
     // ------------------------------------------------
 
     private void HandleConnected()
@@ -256,17 +293,22 @@ public class OnlineLobbyUI : MonoBehaviour
     {
         Debug.Log($"[OnlineLobbyUI] Room created: {roomId}");
 
-        // Switch to waiting screen
         if (selectionPanel != null) selectionPanel.SetActive(false);
         if (joinPanel != null) joinPanel.SetActive(false);
+        
         ShowWaitingScreen(roomId);
+    }
+
+    private void ShowWaitingScreen(string roomId)
+    {
+        if (waitingPanel != null) waitingPanel.SetActive(true);
+        if (roomCodeDisplay != null) roomCodeDisplay.text = roomId;
     }
 
     private void HandleGameStarted(string opponentName, string color)
     {
         Debug.Log($"[OnlineLobbyUI] Game started! Opponent: {opponentName}, Color: {color}");
 
-        // Set GameManager to Online mode
         if (GameManager.Instance != null)
         {
             GameManager.Instance.currentGameMode = GameMode.Online;
@@ -274,16 +316,12 @@ public class OnlineLobbyUI : MonoBehaviour
             GameManager.Instance.UpdatePieceColliders();
         }
 
-        // Set camera for assigned color
         if (CameraSwitcher.Instance != null && SocketManager.Instance != null)
         {
             CameraSwitcher.Instance.SetCameraFor(SocketManager.Instance.assignedColor);
         }
 
-        // Close lobby UI
         HideLobby();
-
-        // If we are on the game scene, hide game menus and start the game
         StartCoroutine(StartOnlineGame(null));
     }
 
@@ -349,14 +387,12 @@ public class OnlineLobbyUI : MonoBehaviour
     private void ShowToastMessage(string msg)
     {
         Debug.Log(msg);
-        // Implement actual UI toast if desired
     }
 
     private IEnumerator StartOnlineGame(System.Action onSceneLoaded)
     {
         bool loadedScene = SceneManager.GetActiveScene().name != "PvPOff";
 
-        // Avoid reloading PvPOff — that destroys GameManager and breaks clicks mid-transition
         if (loadedScene)
             SceneManager.LoadScene("PvPOff");
 
@@ -394,7 +430,6 @@ public class OnlineLobbyUI : MonoBehaviour
             CameraSwitcher.Instance.SetCameraFor(SocketManager.Instance.assignedColor);
         }
 
-        // Hide the title menu / difficulty menu if visible
         GameMenu gameMenu = FindObjectOfType<GameMenu>();
         if (gameMenu != null)
         {
@@ -405,11 +440,9 @@ public class OnlineLobbyUI : MonoBehaviour
             if (gameMenu.settingsPanel != null) gameMenu.settingsPanel.SetActive(false);
             if (gameMenu.logoutButton != null) gameMenu.logoutButton.SetActive(true);
 
-            // Show pause button
             if (gameMenu.pauseButton != null) gameMenu.pauseButton.SetActive(true);
             if (gameMenu.pauseMenuManager != null) gameMenu.pauseMenuManager.SetPauseInputEnabled(true);
 
-            // Hide undo/hint in online mode
             if (gameMenu.easyModeOnlyUI != null)
             {
                 foreach (GameObject uiElement in gameMenu.easyModeOnlyUI)
@@ -424,7 +457,6 @@ public class OnlineLobbyUI : MonoBehaviour
             onSceneLoaded.Invoke();
         }
 
-        // Ensure GameManager colliders are correct
         if (GameManager.Instance != null)
         {
             GameManager.Instance.UpdatePieceColliders();
@@ -482,8 +514,8 @@ public class OnlineLobbyUI : MonoBehaviour
     {
         if (roomListContent == null) return;
 
-        // Clear existing room items
-        foreach (Transform child in roomListContent.transform)
+        // Xóa danh sách phòng cũ
+        foreach (Transform child in roomListContent)
         {
             Destroy(child.gameObject);
         }
@@ -492,9 +524,8 @@ public class OnlineLobbyUI : MonoBehaviour
 
         if (roomsList == null || roomsList.Count == 0)
         {
-            // Show a label saying "No active rooms. Create one!"
             GameObject emptyLabelGo = new GameObject("EmptyLabel", typeof(RectTransform), typeof(TextMeshProUGUI));
-            emptyLabelGo.transform.SetParent(roomListContent.transform, false);
+            emptyLabelGo.transform.SetParent(roomListContent, false);
             
             TextMeshProUGUI tmp = emptyLabelGo.GetComponent<TextMeshProUGUI>();
             tmp.font = font;
@@ -508,308 +539,93 @@ public class OnlineLobbyUI : MonoBehaviour
 
         foreach (var room in roomsList)
         {
-            // Create a container for the room item
-            GameObject item = new GameObject("RoomItem_" + room.roomId, typeof(RectTransform), typeof(CanvasRenderer), typeof(Image), typeof(HorizontalLayoutGroup));
-            item.transform.SetParent(roomListContent.transform, false);
+            if (roomItemPrefab != null)
+            {
+                // Dùng Prefab nếu lập trình viên gán sẵn trong Inspector
+                GameObject item = Instantiate(roomItemPrefab, roomListContent);
+                item.SetActive(true);
 
-            RectTransform itemRt = item.GetComponent<RectTransform>();
-            itemRt.sizeDelta = new Vector2(340, 50);
-
-            Image itemBg = item.GetComponent<Image>();
-            itemBg.color = new Color(0.18f, 0.2f, 0.28f, 1f); // Nice bluish grey background for row
-
-            HorizontalLayoutGroup hlg = item.GetComponent<HorizontalLayoutGroup>();
-            hlg.padding = new RectOffset(15, 15, 5, 5);
-            hlg.spacing = 10f;
-            hlg.childAlignment = TextAnchor.MiddleCenter;
-            hlg.childControlHeight = true;
-            hlg.childControlWidth = true;
-            hlg.childForceExpandHeight = false;
-            hlg.childForceExpandWidth = false;
-
-            // Room text details
-            GameObject labelGo = new GameObject("DetailsText", typeof(RectTransform), typeof(TextMeshProUGUI), typeof(LayoutElement));
-            labelGo.transform.SetParent(item.transform, false);
-            
-            LayoutElement textLe = labelGo.GetComponent<LayoutElement>();
-            textLe.flexibleWidth = 1f;
-
-            TextMeshProUGUI labelTmp = labelGo.GetComponent<TextMeshProUGUI>();
-            labelTmp.font = font;
-            labelTmp.text = $"{room.creatorName} ({room.roomId})";
-            labelTmp.fontSize = 14;
-            labelTmp.fontStyle = FontStyles.Bold;
-            labelTmp.alignment = TextAlignmentOptions.Left;
-            labelTmp.color = Color.white;
-            labelTmp.verticalAlignment = VerticalAlignmentOptions.Middle;
-
-            // Join Button
-            Button joinBtn = CreateButton(item.transform, "JOIN", font, Vector2.zero, new Vector2(80, 36), new Color(0.2f, 0.45f, 0.75f, 1f));
-            LayoutElement btnLe = joinBtn.gameObject.AddComponent<LayoutElement>();
-            btnLe.preferredWidth = 80f;
-            btnLe.preferredHeight = 36f;
-
-            // Since our CreateButton helper makes a child TextMeshProUGUI, we can change its font size
-            TextMeshProUGUI btnTxt = joinBtn.GetComponentInChildren<TextMeshProUGUI>();
-            if (btnTxt != null) btnTxt.fontSize = 12;
-
-            // Set up listener
-            string targetRoomId = room.roomId;
-            joinBtn.onClick.AddListener(() => {
-                if (SocketManager.Instance != null && SocketManager.Instance.IsConnected)
+                TextMeshProUGUI labelTmp = item.GetComponentInChildren<TextMeshProUGUI>();
+                if (labelTmp != null)
                 {
-                    if (statusText != null) statusText.text = $"Joining room {targetRoomId}...";
-                    SocketManager.Instance.JoinRoom(targetRoomId);
+                    labelTmp.text = $"{room.creatorName} ({room.roomId})";
                 }
-            });
-        }
-    }
 
-
-    // ------------------------------------------------
-    // UI Creation
-    // ------------------------------------------------
-
-    private TMP_FontAsset GetFont()
-    {
-        if (cachedFont != null) return cachedFont;
-
-        // Try to find a font from existing TextMeshPro components in the scene
-        TextMeshProUGUI[] tmps = FindObjectsOfType<TextMeshProUGUI>(true);
-        foreach (var tmp in tmps)
-        {
-            if (tmp != null && tmp.font != null)
+                Button joinBtn = item.GetComponentInChildren<Button>();
+                if (joinBtn != null)
+                {
+                    string targetRoomId = room.roomId;
+                    joinBtn.onClick.RemoveAllListeners();
+                    joinBtn.onClick.AddListener(() => {
+                        if (SocketManager.Instance != null && SocketManager.Instance.IsConnected)
+                        {
+                            if (statusText != null) statusText.text = $"Joining room {targetRoomId}...";
+                            SocketManager.Instance.JoinRoom(targetRoomId);
+                        }
+                    });
+                }
+            }
+            else
             {
-                cachedFont = tmp.font;
-                return cachedFont;
+                // Dự phòng: Tự tạo dòng phòng bằng code nếu không gán Prefab
+                GameObject item = new GameObject("RoomItem_" + room.roomId, typeof(RectTransform), typeof(CanvasRenderer), typeof(Image), typeof(HorizontalLayoutGroup));
+                item.transform.SetParent(roomListContent, false);
+
+                RectTransform itemRt = item.GetComponent<RectTransform>();
+                itemRt.sizeDelta = new Vector2(340, 50);
+
+                Image itemBg = item.GetComponent<Image>();
+                itemBg.color = new Color(0.18f, 0.2f, 0.28f, 1f);
+
+                HorizontalLayoutGroup hlg = item.GetComponent<HorizontalLayoutGroup>();
+                hlg.padding = new RectOffset(15, 15, 5, 5);
+                hlg.spacing = 10f;
+                hlg.childAlignment = TextAnchor.MiddleCenter;
+                hlg.childControlHeight = true;
+                hlg.childControlWidth = true;
+                hlg.childForceExpandHeight = false;
+                hlg.childForceExpandWidth = false;
+
+                GameObject labelGo = new GameObject("DetailsText", typeof(RectTransform), typeof(TextMeshProUGUI), typeof(LayoutElement));
+                labelGo.transform.SetParent(item.transform, false);
+                
+                LayoutElement textLe = labelGo.GetComponent<LayoutElement>();
+                textLe.flexibleWidth = 1f;
+
+                TextMeshProUGUI labelTmp = labelGo.GetComponent<TextMeshProUGUI>();
+                labelTmp.font = font;
+                labelTmp.text = $"{room.creatorName} ({room.roomId})";
+                labelTmp.fontSize = 14;
+                labelTmp.fontStyle = FontStyles.Bold;
+                labelTmp.alignment = TextAlignmentOptions.Left;
+                labelTmp.color = Color.white;
+                labelTmp.verticalAlignment = VerticalAlignmentOptions.Middle;
+
+                Button joinBtn = CreateButton(item.transform, "JOIN", font, Vector2.zero, new Vector2(80, 36), new Color(0.2f, 0.45f, 0.75f, 1f));
+                LayoutElement btnLe = joinBtn.gameObject.AddComponent<LayoutElement>();
+                btnLe.preferredWidth = 80f;
+                btnLe.preferredHeight = 36f;
+
+                TextMeshProUGUI btnTxt = joinBtn.GetComponentInChildren<TextMeshProUGUI>();
+                if (btnTxt != null) btnTxt.fontSize = 12;
+
+                string targetRoomId = room.roomId;
+                joinBtn.onClick.AddListener(() => {
+                    if (SocketManager.Instance != null && SocketManager.Instance.IsConnected)
+                    {
+                        if (statusText != null) statusText.text = $"Joining room {targetRoomId}...";
+                        SocketManager.Instance.JoinRoom(targetRoomId);
+                    }
+                });
             }
         }
-
-        cachedFont = TMP_Settings.defaultFontAsset;
-        return cachedFont;
-    }
-
-    private void CreateSelectionUI()
-    {
-        if (selectionPanel != null) return; // Already created
-
-        Canvas canvas = FindObjectOfType<Canvas>();
-        if (canvas == null)
-        {
-            Debug.LogError("[OnlineLobbyUI] No Canvas found in scene!");
-            return;
-        }
-
-        TMP_FontAsset font = GetFont();
-
-        // --- OVERLAY BACKGROUND ---
-        selectionPanel = new GameObject("OnlineSelectionPanel", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image));
-        selectionPanel.transform.SetParent(canvas.transform, false);
-
-        RectTransform panelRt = selectionPanel.GetComponent<RectTransform>();
-        panelRt.anchorMin = Vector2.zero;
-        panelRt.anchorMax = Vector2.one;
-        panelRt.sizeDelta = Vector2.zero;
-        panelRt.anchoredPosition = Vector2.zero;
-
-        Image panelBg = selectionPanel.GetComponent<Image>();
-        panelBg.color = new Color(0.05f, 0.06f, 0.1f, 0.95f);
-        panelBg.raycastTarget = true;
-
-        selectionPanel.transform.SetAsLastSibling();
-
-        // --- Selection Card ---
-        GameObject card = CreateCard(selectionPanel.transform, 400f, 320f);
-        float y = 90f;
-
-        // Title
-        CreateLabel(card.transform, "♟ PLAY ONLINE", font, 26, FontStyles.Bold,
-                    new Vector2(0, y), Color.white);
-        y -= 65f;
-
-        // Host Button
-        createRoomButton = CreateButton(card.transform, "CREATE ROOM", font,
-                                         new Vector2(0, y), new Vector2(280, 50),
-                                         new Color(0.2f, 0.65f, 0.45f, 1f));
-        createRoomButton.onClick.AddListener(OnCreateRoomClicked);
-        y -= 65f;
-
-        // Join Button
-        joinRoomButton = CreateButton(card.transform, "JOIN ROOM", font,
-                                       new Vector2(0, y), new Vector2(280, 50),
-                                       new Color(0.25f, 0.48f, 0.85f, 1f));
-        joinRoomButton.onClick.AddListener(ShowJoinScreen);
-        y -= 65f;
-
-        // Back Button
-        backButton = CreateButton(card.transform, "← BACK", font,
-                                   new Vector2(0, y), new Vector2(200, 40),
-                                   new Color(0.35f, 0.35f, 0.4f, 1f));
-        backButton.onClick.AddListener(OnBackClicked);
-
-        // Status Label (attached to selectionPanel, centered at bottom)
-        statusText = CreateLabel(selectionPanel.transform, "", font, 14, FontStyles.Normal,
-                                  new Vector2(0, -180f), new Color(0.9f, 0.9f, 0.5f, 1f));
-    }
-
-    private void ShowJoinScreen()
-    {
-        if (selectionPanel != null) selectionPanel.SetActive(false);
-
-        if (joinPanel != null)
-        {
-            joinPanel.SetActive(true);
-            // Request room list refresh
-            if (SocketManager.Instance != null && SocketManager.Instance.IsConnected)
-            {
-                SocketManager.Instance.GetAvailableRooms();
-            }
-            return;
-        }
-
-        Canvas canvas = FindObjectOfType<Canvas>();
-        if (canvas == null) return;
-
-        TMP_FontAsset font = GetFont();
-
-        // --- OVERLAY BACKGROUND ---
-        joinPanel = new GameObject("OnlineJoinPanel", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image));
-        joinPanel.transform.SetParent(canvas.transform, false);
-
-        RectTransform panelRt = joinPanel.GetComponent<RectTransform>();
-        panelRt.anchorMin = Vector2.zero;
-        panelRt.anchorMax = Vector2.one;
-        panelRt.sizeDelta = Vector2.zero;
-        panelRt.anchoredPosition = Vector2.zero;
-
-        Image panelBg = joinPanel.GetComponent<Image>();
-        panelBg.color = new Color(0.05f, 0.06f, 0.1f, 0.95f);
-        panelBg.raycastTarget = true;
-
-        joinPanel.transform.SetAsLastSibling();
-
-        // --- Card container ---
-        GameObject card = CreateCard(joinPanel.transform, 500f, 520f);
-        float y = 210f;
-
-        // Title
-        CreateLabel(card.transform, "🌐 JOIN ROOM", font, 26, FontStyles.Bold,
-                    new Vector2(0, y), Color.white);
-        y -= 45f;
-
-        // Header for private room
-        CreateLabel(card.transform, "── Enter Room Code ──", font, 12, FontStyles.Normal,
-                    new Vector2(0, y), new Color(0.6f, 0.6f, 0.6f, 0.8f));
-        y -= 45f;
-
-        // Room ID Input
-        roomIdInput = CreateInputField(card.transform, "Enter Room Code...", font,
-                                        new Vector2(0, y), new Vector2(360, 45));
-        y -= 55f;
-
-        // Join Private Button
-        Button joinPrivateButton = CreateButton(card.transform, "JOIN PRIVATE ROOM", font,
-                                                 new Vector2(0, y), new Vector2(360, 45),
-                                                 new Color(0.25f, 0.48f, 0.85f, 1f));
-        joinPrivateButton.onClick.AddListener(OnJoinRoomClicked);
-        y -= 50f;
-
-        // Header for public rooms
-        CreateLabel(card.transform, "── or select a public room ──", font, 12, FontStyles.Normal,
-                    new Vector2(-50f, y), new Color(0.6f, 0.6f, 0.6f, 0.8f));
-
-        // Refresh Button next to header
-        refreshRoomsButton = CreateButton(card.transform, "REFRESH", font,
-                                           new Vector2(140f, y), new Vector2(90, 26),
-                                           new Color(0.35f, 0.35f, 0.4f, 1f));
-        TextMeshProUGUI refreshText = refreshRoomsButton.GetComponentInChildren<TextMeshProUGUI>();
-        if (refreshText != null) refreshText.fontSize = 11;
-        refreshRoomsButton.onClick.AddListener(() => {
-            if (SocketManager.Instance != null && SocketManager.Instance.IsConnected)
-            {
-                SocketManager.Instance.GetAvailableRooms();
-            }
-        });
-        y -= 85f;
-
-        // Scroll Area for public rooms
-        roomListContent = CreateScrollArea(card.transform, new Vector2(0f, y), new Vector2(360f, 130f));
-
-        // Back Button to return to selection screen
-        Button backToSelectionButton = CreateButton(card.transform, "← BACK", font,
-                                                     new Vector2(0, -215f), new Vector2(160, 40),
-                                                     new Color(0.35f, 0.35f, 0.4f, 1f));
-        backToSelectionButton.onClick.AddListener(() => {
-            if (joinPanel != null) joinPanel.SetActive(false);
-            if (selectionPanel != null) selectionPanel.SetActive(true);
-        });
-
-        // Request available rooms
-        if (SocketManager.Instance != null && SocketManager.Instance.IsConnected)
-        {
-            SocketManager.Instance.GetAvailableRooms();
-        }
-    }
-
-    private void ShowWaitingScreen(string roomId)
-    {
-        Canvas canvas = FindObjectOfType<Canvas>();
-        if (canvas == null) return;
-
-        TMP_FontAsset font = GetFont();
-
-        if (waitingPanel != null) Destroy(waitingPanel);
-
-        // --- OVERLAY ---
-        waitingPanel = new GameObject("WaitingPanel", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image));
-        waitingPanel.transform.SetParent(canvas.transform, false);
-
-        RectTransform panelRt = waitingPanel.GetComponent<RectTransform>();
-        panelRt.anchorMin = Vector2.zero;
-        panelRt.anchorMax = Vector2.one;
-        panelRt.sizeDelta = Vector2.zero;
-
-        Image bg = waitingPanel.GetComponent<Image>();
-        bg.color = new Color(0.05f, 0.06f, 0.1f, 0.95f);
-        bg.raycastTarget = true;
-
-        waitingPanel.transform.SetAsLastSibling();
-
-        // --- CARD ---
-        GameObject card = CreateCard(waitingPanel.transform, 400f, 320f);
-
-        float y = 100f;
-
-        // --- WAITING TEXT ---
-        CreateLabel(card.transform, "⏳ Waiting for opponent...", font, 22, FontStyles.Bold,
-                    new Vector2(0, y), Color.white);
-        y -= 60f;
-
-        // --- ROOM CODE ---
-        CreateLabel(card.transform, "Room Code:", font, 14, FontStyles.Normal,
-                    new Vector2(0, y), new Color(0.7f, 0.7f, 0.7f, 1f));
-        y -= 40f;
-
-        roomCodeDisplay = CreateLabel(card.transform, roomId, font, 36, FontStyles.Bold,
-                                       new Vector2(0, y), new Color(0.3f, 0.85f, 0.6f, 1f));
-        y -= 35f;
-
-        CreateLabel(card.transform, "(Share this code!)", font, 12, FontStyles.Italic,
-                    new Vector2(0, y), new Color(0.6f, 0.6f, 0.6f, 0.8f));
-        y -= 60f;
-
-        // --- CANCEL BUTTON ---
-        cancelWaitButton = CreateButton(card.transform, "CANCEL", font,
-                                         new Vector2(0, y), new Vector2(200, 45),
-                                         new Color(0.7f, 0.3f, 0.3f, 1f));
-        cancelWaitButton.onClick.AddListener(OnCancelWaitClicked);
     }
 
     // ------------------------------------------------
-    // Button Handlers
+    // Button Handlers / Public Methods (Gán sự kiện từ Inspector)
     // ------------------------------------------------
 
-    private void OnCreateRoomClicked()
+    public void OnCreateRoomClicked()
     {
         if (SocketManager.Instance == null || !SocketManager.Instance.IsConnected)
         {
@@ -824,7 +640,7 @@ public class OnlineLobbyUI : MonoBehaviour
         SocketManager.Instance.CreateRoom();
     }
 
-    private void OnJoinRoomClicked()
+    public void OnJoinRoomClicked()
     {
         if (SocketManager.Instance == null || !SocketManager.Instance.IsConnected)
         {
@@ -847,7 +663,7 @@ public class OnlineLobbyUI : MonoBehaviour
         SocketManager.Instance.JoinRoom(roomId);
     }
 
-    private void OnBackClicked()
+    public void OnBackClicked()
     {
         if (SocketManager.Instance != null)
         {
@@ -856,7 +672,6 @@ public class OnlineLobbyUI : MonoBehaviour
 
         HideLobby();
 
-        // Show the title menu again
         GameMenu gameMenu = FindObjectOfType<GameMenu>();
         if (gameMenu != null)
         {
@@ -867,7 +682,7 @@ public class OnlineLobbyUI : MonoBehaviour
         }
     }
 
-    private void OnCancelWaitClicked()
+    public void OnCancelWaitClicked()
     {
         if (SocketManager.Instance != null)
         {
@@ -876,74 +691,40 @@ public class OnlineLobbyUI : MonoBehaviour
 
         if (waitingPanel != null)
         {
-            Destroy(waitingPanel);
-            waitingPanel = null;
+            waitingPanel.SetActive(false);
         }
 
-        // Show selectionPanel again
-        if (selectionPanel != null)
+        ShowSelectionScreen();
+    }
+
+    public void OnRefreshRoomsClicked()
+    {
+        if (SocketManager.Instance != null && SocketManager.Instance.IsConnected)
         {
-            selectionPanel.SetActive(true);
-            if (statusText != null) statusText.text = "";
-        }
-        else
-        {
-            ShowLobby();
+            SocketManager.Instance.GetAvailableRooms();
         }
     }
 
     // ------------------------------------------------
-    // UI Factory Helpers
+    // UI Factory Helpers (Phục vụ phần sinh phòng công khai)
     // ------------------------------------------------
 
-    private GameObject CreateCard(Transform parent, float width, float height)
+    private TMP_FontAsset GetFont()
     {
-        GameObject card = new GameObject("Card", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image));
-        card.transform.SetParent(parent, false);
+        if (cachedFont != null) return cachedFont;
 
-        RectTransform rt = card.GetComponent<RectTransform>();
-        rt.anchorMin = new Vector2(0.5f, 0.5f);
-        rt.anchorMax = new Vector2(0.5f, 0.5f);
-        rt.pivot = new Vector2(0.5f, 0.5f);
-        rt.sizeDelta = new Vector2(width, height);
-        rt.anchoredPosition = Vector2.zero;
+        TextMeshProUGUI[] tmps = FindObjectsOfType<TextMeshProUGUI>(true);
+        foreach (var tmp in tmps)
+        {
+            if (tmp != null && tmp.font != null)
+            {
+                cachedFont = tmp.font;
+                return cachedFont;
+            }
+        }
 
-        Image img = card.GetComponent<Image>();
-        img.color = new Color(0.12f, 0.13f, 0.18f, 0.95f);
-
-        // Add subtle outline
-        Outline outline = card.AddComponent<Outline>();
-        outline.effectColor = new Color(1f, 1f, 1f, 0.1f);
-        outline.effectDistance = new Vector2(2f, -2f);
-
-        return card;
-    }
-
-    private TextMeshProUGUI CreateLabel(Transform parent, string text, TMP_FontAsset font,
-                                         float fontSize, FontStyles style, Vector2 position, Color color)
-    {
-        GameObject go = new GameObject("Label", typeof(RectTransform), typeof(TextMeshProUGUI));
-        go.transform.SetParent(parent, false);
-
-        RectTransform rt = go.GetComponent<RectTransform>();
-        rt.anchorMin = new Vector2(0.5f, 0.5f);
-        rt.anchorMax = new Vector2(0.5f, 0.5f);
-        rt.pivot = new Vector2(0.5f, 0.5f);
-        rt.sizeDelta = new Vector2(360, fontSize + 15);
-        rt.anchoredPosition = position;
-
-        TextMeshProUGUI tmp = go.GetComponent<TextMeshProUGUI>();
-        tmp.font = font;
-        tmp.text = text;
-        tmp.fontSize = fontSize;
-        tmp.fontStyle = style;
-        tmp.alignment = TextAlignmentOptions.Center;
-        tmp.color = color;
-        tmp.enableWordWrapping = true;
-        tmp.overflowMode = TextOverflowModes.Overflow;
-        tmp.raycastTarget = false;
-
-        return tmp;
+        cachedFont = TMP_Settings.defaultFontAsset;
+        return cachedFont;
     }
 
     private Button CreateButton(Transform parent, string label, TMP_FontAsset font,
@@ -961,6 +742,7 @@ public class OnlineLobbyUI : MonoBehaviour
 
         Image img = go.GetComponent<Image>();
         img.color = bgColor;
+        img.raycastTarget = true; // Rất quan trọng để Button có thể click được!
 
         Button btn = go.GetComponent<Button>();
         ColorBlock colors = btn.colors;
@@ -968,7 +750,6 @@ public class OnlineLobbyUI : MonoBehaviour
         colors.pressedColor = new Color(bgColor.r - 0.1f, bgColor.g - 0.1f, bgColor.b - 0.1f, 1f);
         btn.colors = colors;
 
-        // Button text
         GameObject textGo = new GameObject("Text", typeof(RectTransform), typeof(TextMeshProUGUI));
         textGo.transform.SetParent(go.transform, false);
 
@@ -985,138 +766,8 @@ public class OnlineLobbyUI : MonoBehaviour
         textTmp.fontStyle = FontStyles.Bold;
         textTmp.alignment = TextAlignmentOptions.Center;
         textTmp.color = Color.white;
+        textTmp.raycastTarget = false;
 
         return btn;
-    }
-
-    private TMP_InputField CreateInputField(Transform parent, string placeholder, TMP_FontAsset font,
-                                             Vector2 position, Vector2 size)
-    {
-        GameObject go = new GameObject("InputField_RoomId", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image), typeof(TMP_InputField));
-        go.transform.SetParent(parent, false);
-
-        RectTransform rt = go.GetComponent<RectTransform>();
-        rt.anchorMin = new Vector2(0.5f, 0.5f);
-        rt.anchorMax = new Vector2(0.5f, 0.5f);
-        rt.pivot = new Vector2(0.5f, 0.5f);
-        rt.sizeDelta = size;
-        rt.anchoredPosition = position;
-
-        Image img = go.GetComponent<Image>();
-        img.color = new Color(0.18f, 0.19f, 0.25f, 1f);
-
-        // Text area
-        GameObject textArea = new GameObject("TextArea", typeof(RectTransform), typeof(RectMask2D));
-        textArea.transform.SetParent(go.transform, false);
-        RectTransform taRt = textArea.GetComponent<RectTransform>();
-        taRt.anchorMin = Vector2.zero;
-        taRt.anchorMax = Vector2.one;
-        taRt.offsetMin = new Vector2(15, 5);
-        taRt.offsetMax = new Vector2(-15, -5);
-
-        // Main text
-        GameObject textGo = new GameObject("Text", typeof(RectTransform), typeof(TextMeshProUGUI));
-        textGo.transform.SetParent(textArea.transform, false);
-        RectTransform txtRt = textGo.GetComponent<RectTransform>();
-        txtRt.anchorMin = Vector2.zero;
-        txtRt.anchorMax = Vector2.one;
-        txtRt.sizeDelta = Vector2.zero;
-        txtRt.anchoredPosition = Vector2.zero;
-
-        TextMeshProUGUI textComp = textGo.GetComponent<TextMeshProUGUI>();
-        textComp.font = font;
-        textComp.fontSize = 22;
-        textComp.fontStyle = FontStyles.Bold;
-        textComp.alignment = TextAlignmentOptions.Center;
-        textComp.color = Color.white;
-
-        // Placeholder text
-        GameObject phGo = new GameObject("Placeholder", typeof(RectTransform), typeof(TextMeshProUGUI));
-        phGo.transform.SetParent(textArea.transform, false);
-        RectTransform phRt = phGo.GetComponent<RectTransform>();
-        phRt.anchorMin = Vector2.zero;
-        phRt.anchorMax = Vector2.one;
-        phRt.sizeDelta = Vector2.zero;
-        phRt.anchoredPosition = Vector2.zero;
-
-        TextMeshProUGUI phComp = phGo.GetComponent<TextMeshProUGUI>();
-        phComp.font = font;
-        phComp.text = placeholder;
-        phComp.fontSize = 18;
-        phComp.fontStyle = FontStyles.Italic;
-        phComp.alignment = TextAlignmentOptions.Center;
-        phComp.color = new Color(0.5f, 0.5f, 0.55f, 0.8f);
-
-        // Configure InputField
-        TMP_InputField inputField = go.GetComponent<TMP_InputField>();
-        inputField.textComponent = textComp;
-        inputField.placeholder = phComp;
-        inputField.textViewport = taRt;
-        inputField.characterLimit = 6;
-        inputField.contentType = TMP_InputField.ContentType.Alphanumeric;
-        inputField.onValueChanged.AddListener((val) => {
-            inputField.text = val.ToUpper();
-        });
-
-        return inputField;
-    }
-
-    private GameObject CreateScrollArea(Transform parent, Vector2 position, Vector2 size)
-    {
-        // 1. ScrollRoot
-        GameObject scrollRoot = new GameObject("ScrollRoot", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image), typeof(ScrollRect));
-        scrollRoot.transform.SetParent(parent, false);
-        
-        RectTransform rootRt = scrollRoot.GetComponent<RectTransform>();
-        rootRt.anchorMin = new Vector2(0.5f, 0.5f);
-        rootRt.anchorMax = new Vector2(0.5f, 0.5f);
-        rootRt.pivot = new Vector2(0.5f, 0.5f);
-        rootRt.sizeDelta = size;
-        rootRt.anchoredPosition = position;
-
-        Image bgImage = scrollRoot.GetComponent<Image>();
-        bgImage.color = new Color(0.08f, 0.09f, 0.13f, 1f); // Darker inside scroll area
-
-        ScrollRect scrollRect = scrollRoot.GetComponent<ScrollRect>();
-        scrollRect.horizontal = false;
-        scrollRect.vertical = true;
-        scrollRect.movementType = ScrollRect.MovementType.Clamped;
-
-        // 2. Viewport
-        GameObject viewport = new GameObject("Viewport", typeof(RectTransform), typeof(CanvasRenderer), typeof(RectMask2D));
-        viewport.transform.SetParent(scrollRoot.transform, false);
-        
-        RectTransform viewRt = viewport.GetComponent<RectTransform>();
-        viewRt.anchorMin = Vector2.zero;
-        viewRt.anchorMax = Vector2.one;
-        viewRt.sizeDelta = Vector2.zero; // Stretch
-
-        // 3. Content
-        GameObject content = new GameObject("Content", typeof(RectTransform), typeof(VerticalLayoutGroup), typeof(ContentSizeFitter));
-        content.transform.SetParent(viewport.transform, false);
-
-        RectTransform contentRt = content.GetComponent<RectTransform>();
-        contentRt.anchorMin = new Vector2(0f, 1f); // Top left anchor for vertical scrolling
-        contentRt.anchorMax = new Vector2(1f, 1f);
-        contentRt.pivot = new Vector2(0.5f, 1f);
-        contentRt.sizeDelta = new Vector2(0f, 0f);
-
-        VerticalLayoutGroup vlg = content.GetComponent<VerticalLayoutGroup>();
-        vlg.padding = new RectOffset(10, 10, 10, 10);
-        vlg.spacing = 5f;
-        vlg.childAlignment = TextAnchor.UpperCenter;
-        vlg.childControlHeight = false;
-        vlg.childControlWidth = true;
-        vlg.childForceExpandHeight = false;
-        vlg.childForceExpandWidth = true;
-
-        ContentSizeFitter csf = content.GetComponent<ContentSizeFitter>();
-        csf.verticalFit = ContentSizeFitter.FitMode.PreferredSize;
-        csf.horizontalFit = ContentSizeFitter.FitMode.Unconstrained;
-
-        scrollRect.viewport = viewRt;
-        scrollRect.content = contentRt;
-
-        return content;
     }
 }
