@@ -81,6 +81,7 @@ public class OnlineLobbyUI : MonoBehaviour
         EnsureSocketManager();
         SubscribeEvents();
         SetupButtonListeners();
+        HideLobby();
     }
 
     private void OnDestroy()
