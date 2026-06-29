@@ -40,7 +40,6 @@ public class GameMenu : MonoBehaviour
     private void Start()
     {
         AutoPopulateEasyModeUI();
-        StartCoroutine(InjectPlayOnlineButton());
 
         if (logoutButton == null)
         {
@@ -461,86 +460,5 @@ public class GameMenu : MonoBehaviour
         {
             EventSystem.current.SetSelectedGameObject(null);
         }
-    }
-
-    /// <summary>
-    /// Injects a "PLAY ONLINE" button into the Title Menu panel dynamically.
-    /// </summary>
-    private System.Collections.IEnumerator InjectPlayOnlineButton()
-    {
-        yield return new WaitForSeconds(0.3f);
-
-        if (titleMenuPanel == null) yield break;
-
-        // Check if already injected
-        if (titleMenuPanel.transform.Find("Btn_PlayOnline") != null) yield break;
-
-        // Find a reference button to clone
-        Button refButton = titleMenuPanel.GetComponentInChildren<Button>(true);
-        if (refButton == null) yield break;
-
-        // Clone the reference button
-        GameObject onlineBtnGo = Instantiate(refButton.gameObject, titleMenuPanel.transform);
-        onlineBtnGo.name = "Btn_PlayOnline";
-
-        // Fix scale & position
-        RectTransform rt = onlineBtnGo.GetComponent<RectTransform>();
-        if (rt != null)
-        {
-            rt.localScale = Vector3.one;
-            rt.anchoredPosition3D = new Vector3(rt.anchoredPosition.x, rt.anchoredPosition.y, 0f);
-        }
-
-        // Replace Button component to clear old listeners
-        Button oldBtn = onlineBtnGo.GetComponent<Button>();
-        if (oldBtn != null)
-        {
-            ColorBlock colors = oldBtn.colors;
-            Navigation nav = oldBtn.navigation;
-            Graphic target = oldBtn.targetGraphic;
-            SpriteState sprites = oldBtn.spriteState;
-            Selectable.Transition trans = oldBtn.transition;
-
-            DestroyImmediate(oldBtn);
-
-            Button btn = onlineBtnGo.AddComponent<Button>();
-            btn.colors = colors;
-            btn.navigation = nav;
-            btn.targetGraphic = target;
-            btn.spriteState = sprites;
-            btn.transition = trans;
-
-            btn.onClick.AddListener(PlayOnline);
-        }
-
-        // Remove custom scripts that might interfere
-        MonoBehaviour[] scripts = onlineBtnGo.GetComponents<MonoBehaviour>();
-        foreach (MonoBehaviour script in scripts)
-        {
-            if (script != null &&
-                !(script is Button) &&
-                !(script is Image) &&
-                !(script is CanvasRenderer) &&
-                !(script is RectTransform) &&
-                !(script is LayoutElement))
-            {
-                DestroyImmediate(script);
-            }
-        }
-
-        // Change text
-        TextMeshProUGUI tmp = onlineBtnGo.GetComponentInChildren<TextMeshProUGUI>(true);
-        if (tmp != null)
-        {
-            tmp.text = "PLAY ONLINE";
-        }
-        else
-        {
-            Text legacyText = onlineBtnGo.GetComponentInChildren<Text>(true);
-            if (legacyText != null) legacyText.text = "PLAY ONLINE";
-        }
-
-        onlineBtnGo.SetActive(true);
-        Debug.Log("[GameMenu] Injected 'PLAY ONLINE' button into Title Menu.");
     }
 }
