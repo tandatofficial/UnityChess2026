@@ -2,6 +2,8 @@
 /.codex/
 /.mcp/
 .antigravity
+.agent/
+.agents/
 
 # Unity local folders at root (in case root is opened in Unity by mistake)
 /Library/
