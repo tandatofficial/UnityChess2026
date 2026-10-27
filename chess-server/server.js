@@ -1,9 +1,6 @@
 const path = require('path');
 const dotenv = require('dotenv');
-const result = dotenv.config({ path: path.join(__dirname, '.env'), override: true });
-console.log("Dotenv result:", result);
-console.log("Loaded MAILTRAP_USER:", process.env.MAILTRAP_USER);
-console.log("Loaded MAILTRAP_PASS:", process.env.MAILTRAP_PASS ? "EXISTS" : "MISSING");
+dotenv.config({ path: path.join(__dirname, '.env'), override: true });
 const express = require('express');
 const cors = require('cors');
 const http = require('http');
@@ -21,13 +18,15 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// Initialize Supabase Client
+// Initialize Supabase Client safely
 const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseKey = process.env.SUPABASE_KEY;
+let supabase = null;
 if (!supabaseUrl || !supabaseKey) {
-  console.error("❌ ERROR: SUPABASE_URL and SUPABASE_KEY must be configured in .env!");
+  console.warn("⚠️ WARNING: SUPABASE_URL and SUPABASE_KEY are not configured. Auth endpoints will return 503 until configured.");
+} else {
+  supabase = createClient(supabaseUrl, supabaseKey);
 }
-const supabase = createClient(supabaseUrl, supabaseKey);
 
 // Crypto Helpers
 function hashPassword(password, salt) {
@@ -106,7 +105,12 @@ const swaggerOptions = {
     },
     servers: [
       {
-        url: `http://localhost:${PORT}`,
+        url: process.env.RENDER_EXTERNAL_URL || `http://localhost:${PORT}`,
+        description: process.env.RENDER_EXTERNAL_URL ? 'Render Production Server' : 'Local Server',
+      },
+      {
+        url: '/',
+        description: 'Current Host (Relative)',
       },
     ],
   },
@@ -115,6 +119,17 @@ const swaggerOptions = {
 
 const swaggerDocs = swaggerJsdoc(swaggerOptions);
 app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerDocs));
+
+// ----------------------------------------------------
+// Health Check & Status Endpoints (Required for Render)
+// ----------------------------------------------------
+app.get('/health', (req, res) => {
+  res.status(200).json({
+    status: 'healthy',
+    uptime: Math.floor(process.uptime()),
+    timestamp: new Date().toISOString(),
+  });
+});
 
 // ----------------------------------------------------
 // HTTP API Endpoints
@@ -149,6 +164,9 @@ app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerDocs));
  *         description: Bad request (missing fields, email/username already taken, etc.)
  */
 app.post('/api/auth/register', async (req, res) => {
+  if (!supabase) {
+    return res.status(503).json({ error: "Database service is not configured." });
+  }
   const { username, email, password } = req.body;
   if (!username || !email || !password) {
     return res.status(400).json({ error: "Missing required fields (username, email, password)." });
@@ -252,6 +270,9 @@ app.post('/api/auth/register', async (req, res) => {
  *         description: Invalid or expired verification code
  */
 app.post('/api/auth/verify', async (req, res) => {
+  if (!supabase) {
+    return res.status(503).json({ error: "Database service is not configured." });
+  }
   const { email, code } = req.body;
   if (!email || !code) {
     return res.status(400).json({ error: "Missing required fields (email, code)." });
@@ -329,6 +350,9 @@ app.post('/api/auth/verify', async (req, res) => {
  *         description: Invalid credentials or unverified email
  */
 app.post('/api/auth/login', async (req, res) => {
+  if (!supabase) {
+    return res.status(503).json({ error: "Database service is not configured." });
+  }
   const { usernameOrEmail, password } = req.body;
   if (!usernameOrEmail || !password) {
     return res.status(400).json({ error: "Missing usernameOrEmail or password." });
@@ -375,7 +399,9 @@ const server = http.createServer(app);
 const io = new Server(server, {
   cors: {
     origin: "*"
-  }
+  },
+  pingTimeout: 20000,
+  pingInterval: 25000
 });
 
 // ----------------------------------------------------
@@ -384,6 +410,15 @@ const io = new Server(server, {
 
 const rooms = new Map(); // roomId -> RoomState
 const playerRoomMap = new Map(); // playerId -> roomId
+
+app.get('/', (req, res) => {
+  res.status(200).json({
+    status: 'online',
+    service: 'UnityChess2026 Multiplayer Server',
+    activeRooms: rooms.size,
+    swaggerDocs: '/api-docs'
+  });
+});
 
 function generateRoomId() {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -407,6 +442,8 @@ function createRoomState(roomId) {
     moves: [],
     currentTurn: 'white',
     boardState: null,
+    whiteTime: -1,
+    blackTime: -1,
     reconnectTimer: null,
     rematchRequests: new Set(),
     rematchReadyCount: 0,
@@ -498,7 +535,9 @@ io.on("connection", (socket) => {
       roomId: existingRoom.roomId,
       color: isWhite ? "white" : "black",
       boardState: existingRoom.boardState,
-      currentTurn: existingRoom.currentTurn
+      currentTurn: existingRoom.currentTurn,
+      whiteTime: existingRoom.whiteTime,
+      blackTime: existingRoom.blackTime
     }));
 
     console.log(`🔄 ${playerName} reconnected to room ${existingRoom.roomId}`);
@@ -666,6 +705,8 @@ io.on("connection", (socket) => {
 
     const moveStr = parsed.move || data;
     room.boardState = parsed.boardState || room.boardState;
+    if (typeof parsed.whiteTime === 'number' && parsed.whiteTime > 0) room.whiteTime = parsed.whiteTime;
+    if (typeof parsed.blackTime === 'number' && parsed.blackTime > 0) room.blackTime = parsed.blackTime;
 
     room.moves.push({
       player: expectedTurn,
@@ -676,7 +717,11 @@ io.on("connection", (socket) => {
     room.currentTurn = room.currentTurn === 'white' ? 'black' : 'white';
 
     const opponentSocketId = isWhite ? room.black : room.white;
-    io.to(opponentSocketId).emit("move", JSON.stringify({ move: moveStr }));
+    io.to(opponentSocketId).emit("move", JSON.stringify({
+      move: moveStr,
+      whiteTime: room.whiteTime,
+      blackTime: room.blackTime
+    }));
     console.log(`♟️ [${room.roomId}] ${playerName} (${expectedTurn}): ${moveStr} | Turn -> ${room.currentTurn}`);
   });
 
@@ -779,6 +824,8 @@ io.on("connection", (socket) => {
       room.moves = [];
       room.currentTurn = 'white';
       room.boardState = null;
+      room.whiteTime = -1;
+      room.blackTime = -1;
       room.rematchRequests.clear();
       room.rematchReadyCount = 0;
 
@@ -843,8 +890,10 @@ io.on("connection", (socket) => {
   });
 });
 
-server.listen(PORT, () => {
+server.listen(PORT, '0.0.0.0', () => {
+  const baseUrl = process.env.RENDER_EXTERNAL_URL || `http://localhost:${PORT}`;
   console.log(`🟢 Chess server running on port ${PORT}`);
-  console.log(`📄 Swagger docs available at http://localhost:${PORT}/api-docs`);
+  console.log(`📄 Swagger docs available at ${baseUrl}/api-docs`);
+  console.log(`🩺 Health check available at ${baseUrl}/health`);
   console.log(`🎮 Room-based multiplayer system active.`);
 });

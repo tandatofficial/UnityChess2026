@@ -13,6 +13,14 @@
 /Logs/
 *.csproj
 *.sln
+*.slnx
 *.suo
 *.user
 *.userprefs
+
+# ParrelSync clones & local environment secrets
+/UnityChess2026_clone_*/
+.env
+.env.*
+!.env.example
+node_modules/

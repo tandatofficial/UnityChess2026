@@ -27,25 +27,44 @@ public class StockfishManager : MonoBehaviour
 
     public void StartEngine()
     {
-        // Trỏ đường dẫn tới file .exe trong thư mục StreamingAssets
-        string path = Path.Combine(Application.streamingAssetsPath, "stockfish.exe");
+#if UNITY_WEBGL && !UNITY_EDITOR
+        UnityEngine.Debug.LogWarning("[StockfishManager] Stockfish external process is not supported on WebGL.");
+        return;
+#else
+        try
+        {
+            // Trỏ đường dẫn tới file .exe trong thư mục StreamingAssets
+            string path = Path.Combine(Application.streamingAssetsPath, "stockfish.exe");
+            if (!File.Exists(path))
+            {
+                UnityEngine.Debug.LogWarning($"[StockfishManager] stockfish.exe not found at: {path}");
+                return;
+            }
 
-        stockfishProcess = new Process();
-        stockfishProcess.StartInfo.FileName = path;
-        stockfishProcess.StartInfo.UseShellExecute = false;
-        stockfishProcess.StartInfo.RedirectStandardInput = true;
-        stockfishProcess.StartInfo.RedirectStandardOutput = true;
-        stockfishProcess.StartInfo.CreateNoWindow = true;
+            stockfishProcess = new Process();
+            stockfishProcess.StartInfo.FileName = path;
+            stockfishProcess.StartInfo.UseShellExecute = false;
+            stockfishProcess.StartInfo.RedirectStandardInput = true;
+            stockfishProcess.StartInfo.RedirectStandardOutput = true;
+            stockfishProcess.StartInfo.CreateNoWindow = true;
 
-        // Đăng ký sự kiện lắng nghe phản hồi từ Stockfish (chạy luồng riêng)
-        stockfishProcess.OutputDataReceived += OnOutputDataReceived;
+            // Đăng ký sự kiện lắng nghe phản hồi từ Stockfish (chạy luồng riêng)
+            stockfishProcess.OutputDataReceived += OnOutputDataReceived;
 
-        stockfishProcess.Start();
-        stockfishProcess.BeginOutputReadLine(); // Bắt đầu lắng nghe
-        streamWriter = stockfishProcess.StandardInput;
+            stockfishProcess.Start();
+            stockfishProcess.BeginOutputReadLine(); // Bắt đầu lắng nghe
+            streamWriter = stockfishProcess.StandardInput;
 
-        SendCommand("uci");
-        SendCommand("isready");
+            SendCommand("uci");
+            SendCommand("isready");
+        }
+        catch (Exception ex)
+        {
+            UnityEngine.Debug.LogWarning($"[StockfishManager] Could not start Stockfish engine: {ex.Message}");
+            stockfishProcess = null;
+            streamWriter = null;
+        }
+#endif
     }
 
     public void SendCommand(string command)
@@ -59,6 +78,12 @@ public class StockfishManager : MonoBehaviour
 
     public void GetBestMove(string moveHistoryStr, int thinkTimeMs = 1000, Action<string> callback = null)
     {
+        if (streamWriter == null)
+        {
+            UnityEngine.Debug.LogWarning("⚠️ Stockfish engine chưa sẵn sàng hoặc không được hỗ trợ trên nền tảng này.");
+            return;
+        }
+
         if (isCalculating) 
         {
             UnityEngine.Debug.LogWarning("⚠️ Bỏ qua lệnh: AI đang bận suy nghĩ rồi!");
@@ -160,6 +185,8 @@ public class StockfishManager : MonoBehaviour
 
     private void ExecuteStockfishMove(string move)
     {
+        if (string.IsNullOrEmpty(move) || move.Length < 4) return;
+
         // Giải mã ngôn ngữ UCI (vd: "e7" -> col:4, row:6)
         int fromCol = move[0] - 'a';
         int fromRow = move[1] - '1';
@@ -168,8 +195,19 @@ public class StockfishManager : MonoBehaviour
 
         UnityEngine.Debug.Log($"🤖 Stockfish chọn: {move} -> ({fromRow},{fromCol}) tới ({toRow},{toCol})");
 
-        // Gọi thẳng hàm Network có sẵn
+        // Gọi thẳng hàm Network có sẵn (hỗ trợ cả nước đi phong cấp 5 ký tự của UCI, vd: e2e1q)
         string formattedMove = $"{fromRow},{fromCol}->{toRow},{toCol}";
+        if (move.Length >= 5)
+        {
+            PieceType promo = char.ToLower(move[4]) switch
+            {
+                'r' => PieceType.Rook,
+                'b' => PieceType.Bishop,
+                'n' => PieceType.Knight,
+                _ => PieceType.Queen
+            };
+            formattedMove += $"={promo}";
+        }
         GameManager.Instance.ApplyMoveFromNetwork(formattedMove);
     }
 

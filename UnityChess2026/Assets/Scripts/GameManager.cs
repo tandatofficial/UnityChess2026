@@ -89,6 +89,11 @@ public class GameManager : MonoBehaviour
         currentTurn = PieceColor.White;
         currentGameMode = GameMode.Online;
 
+        if (ChessClock.Instance != null)
+        {
+            ChessClock.Instance.ResetClock();
+        }
+
         if (PieceSpawner.Instance != null)
             PieceSpawner.Instance.SpawnAllPieces();
 
@@ -218,20 +223,28 @@ public class GameManager : MonoBehaviour
         if (AudioManager.Instance != null)
             AudioManager.Instance.PlayMoveSound();
 
-        // ✅ Gửi nước đi tới server
-        if (currentGameMode == GameMode.Online)
-        {
-            SendNetworkMove($"{fromRow},{fromCol}->{row},{col}");
-        }
+        bool isPromotion = selectedPiece != null && selectedPiece.type == PieceType.Pawn && (row == 0 || row == 7);
 
         // ✅ Log ra console
         Debug.Log($"♟️ {movingColor} {movingType} moved from {fromRow},{fromCol} to {row},{col}");
 
-        // Xử lý phong hậu nếu cần
-        if (HandlePromotionIfNeeded(selectedPiece))
+        // Xử lý phong cấp nếu cần (Trong chế độ Online, chờ chọn quân xong mới gửi nước đi kèm loại quân)
+        if (isPromotion)
         {
-            ClearHighlights();
+            if (currentGameMode == GameMode.Online)
+            {
+                pendingNetworkMove = $"{fromRow},{fromCol}->{row},{col}";
+            }
+            ChessPiece promotingPiece = selectedPiece;
+            DeselectPiece();
+            HandlePromotionIfNeeded(promotingPiece);
             return;
+        }
+
+        // ✅ Gửi nước đi tới server (cho các nước đi thông thường)
+        if (currentGameMode == GameMode.Online)
+        {
+            SendNetworkMove($"{fromRow},{fromCol}->{row},{col}");
         }
 
         // Hủy chọn, kiểm tra chiếu và tiếp tục game
@@ -280,16 +293,35 @@ public class GameManager : MonoBehaviour
     {
         if (string.IsNullOrEmpty(move)) return;
 
-        string[] parts = move.Split("->");
+        // Tách thông tin phong cấp nếu có (ví dụ: "6,4->7,4=Queen")
+        PieceType promotionType = PieceType.Queen;
+        string moveCoords = move;
+        int eqIndex = move.IndexOf('=');
+        if (eqIndex >= 0)
+        {
+            moveCoords = move.Substring(0, eqIndex);
+            string promoStr = move.Substring(eqIndex + 1).Trim();
+            if (System.Enum.TryParse(promoStr, true, out PieceType parsedType))
+            {
+                promotionType = parsedType;
+            }
+        }
+
+        string[] parts = moveCoords.Split("->");
         if (parts.Length != 2) return;
 
         string[] from = parts[0].Split(',');
         string[] to = parts[1].Split(',');
+        if (from.Length < 2 || to.Length < 2) return;
 
-        int fromRow = int.Parse(from[0]);
-        int fromCol = int.Parse(from[1]);
-        int toRow = int.Parse(to[0]);
-        int toCol = int.Parse(to[1]);
+        if (!int.TryParse(from[0], out int fromRow) ||
+            !int.TryParse(from[1], out int fromCol) ||
+            !int.TryParse(to[0], out int toRow) ||
+            !int.TryParse(to[1], out int toCol))
+        {
+            Debug.LogError($"[GameManager] Invalid move coordinates: {move}");
+            return;
+        }
 
         ChessPiece piece = pieceBoard[fromRow, fromCol];
         if (piece == null) return;
@@ -308,13 +340,17 @@ public class GameManager : MonoBehaviour
         if (AudioManager.Instance != null)
             AudioManager.Instance.PlayMoveSound();
 
-        if (HandlePromotionIfNeeded(piece))
+        DeselectPiece();
+
+        // Nếu nước đi từ đối thủ / AI là nước phong cấp, thực hiện đổi quân trực tiếp
+        if (piece.type == PieceType.Pawn && (toRow == 0 || toRow == 7))
         {
-            ClearHighlights();
-            return;
+            if (PromotionManager.Instance != null)
+            {
+                PromotionManager.Instance.PromotePawnDirectly(piece, promotionType);
+            }
         }
 
-        DeselectPiece();
         NotifyIfCheck();
 
         PieceColor opponent = currentTurn == PieceColor.White ? PieceColor.Black : PieceColor.White;
@@ -393,9 +429,11 @@ public class GameManager : MonoBehaviour
         {
             string winnerName = winner == "white" ? "Trắng" : "Đen";
             string displayReason = reason;
-            if (reason.Contains("disconnected")) displayReason = "Đối thủ mất kết nối";
+            if (reason.Contains("disconnected") || reason.Contains("abandoned")) displayReason = "Đối thủ mất kết nối";
+            else if (reason.Contains("left")) displayReason = "Đối thủ rời phòng";
             else if (reason.Contains("resigned")) displayReason = "Đối thủ xin thua";
             else if (reason.Contains("checkmate")) displayReason = "Chiếu hết";
+            else if (reason.Contains("timeout")) displayReason = "Hết thời gian";
             UIManager.Instance.gameOverText.text = $"{winnerName} Thắng!\n{displayReason}";
         }
     }
@@ -931,12 +969,14 @@ public class GameManager : MonoBehaviour
                         r = r,
                         c = c,
                         type = pieceBoard[r, c].type,
-                        color = pieceBoard[r, c].color
+                        color = pieceBoard[r, c].color,
+                        hasMoved = pieceBoard[r, c].hasMoved
                     });
                 }
             }
         }
-        return JsonUtility.ToJson(new BoardStateData { pieces = pieceDataList, turn = currentTurn });
+        PieceColor nextTurn = currentTurn == PieceColor.White ? PieceColor.Black : PieceColor.White;
+        return JsonUtility.ToJson(new BoardStateData { pieces = pieceDataList, turn = nextTurn });
     }
 
     public void LoadBoardState(string stateJson)
@@ -967,11 +1007,17 @@ public class GameManager : MonoBehaviour
             {
                 Vector3 pos = BoardManager.Instance.GetWorldPosition(p.r, p.c);
                 Transform parent = p.color == PieceColor.White ? PieceSpawner.Instance.whitePieces.transform : PieceSpawner.Instance.blackPieces.transform;
+                Quaternion rotation = prefab.transform.rotation;
+                if (p.type == PieceType.Knight)
+                {
+                    rotation = (p.color == PieceColor.White) ? Quaternion.Euler(0, 90f, 0) : Quaternion.Euler(0, -90f, 0);
+                }
                 ChessPiece piece = new ChessPieceBuilder()
-                    .Create(prefab, pos, prefab.transform.rotation, parent)
+                    .Create(prefab, pos, rotation, parent)
                     .SetInfo(p.r, p.c, p.color, p.type)
                     .AddSelector()
                     .Build();
+                piece.hasMoved = p.hasMoved;
                 pieceBoard[p.r, p.c] = piece;
             }
         }
@@ -983,7 +1029,15 @@ public class GameManager : MonoBehaviour
     public void SendNetworkMove(string moveString)
     {
         string stateJson = GetBoardStateJson();
-        string networkData = JsonUtility.ToJson(new NetworkMoveData { move = moveString, boardState = stateJson });
+        float wTime = ChessClock.Instance != null ? ChessClock.Instance.whiteTimeRemaining : -1f;
+        float bTime = ChessClock.Instance != null ? ChessClock.Instance.blackTimeRemaining : -1f;
+        string networkData = JsonUtility.ToJson(new NetworkMoveData
+        {
+            move = moveString,
+            boardState = stateJson,
+            whiteTime = wTime,
+            blackTime = bTime
+        });
         SocketManager.Instance.SendMove(networkData);
     }
 }
@@ -993,6 +1047,8 @@ public class NetworkMoveData
 {
     public string move;
     public string boardState;
+    public float whiteTime;
+    public float blackTime;
 }
 
 [System.Serializable]
@@ -1009,4 +1065,5 @@ public class PieceData
     public int c;
     public PieceType type;
     public PieceColor color;
+    public bool hasMoved;
 }

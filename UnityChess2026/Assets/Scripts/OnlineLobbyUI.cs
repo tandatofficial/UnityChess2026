@@ -313,7 +313,9 @@ public class OnlineLobbyUI : MonoBehaviour
     {
         SetInteractable(false);
         if (statusText != null)
-            statusText.text = "<color=#FF6B6B>Cannot connect to server. Run: cd chess-server && npm start</color>";
+        {
+            statusText.text = "<color=#FF6B6B>Cannot connect to server. Please check server status or connection.</color>";
+        }
     }
 
     private void HandleRoomCreated(string roomId)
@@ -352,6 +354,8 @@ public class OnlineLobbyUI : MonoBehaviour
         public string color;
         public string boardState;
         public string currentTurn;
+        public float whiteTime;
+        public float blackTime;
     }
 
     private void HandleReconnectSuccess(string json)
@@ -372,7 +376,16 @@ public class OnlineLobbyUI : MonoBehaviour
             if (GameManager.Instance != null)
             {
                 GameManager.Instance.LoadBoardState(data.boardState);
+                if (!string.IsNullOrEmpty(data.currentTurn))
+                {
+                    GameManager.Instance.currentTurn = (data.currentTurn == "black") ? PieceColor.Black : PieceColor.White;
+                    GameManager.Instance.UpdatePieceColliders();
+                }
                 GameManager.Instance.isPausedForReconnect = false;
+            }
+            if (ChessClock.Instance != null && (data.whiteTime > 0f || data.blackTime > 0f))
+            {
+                ChessClock.Instance.SyncClockTimes(data.whiteTime, data.blackTime);
             }
         }));
     }

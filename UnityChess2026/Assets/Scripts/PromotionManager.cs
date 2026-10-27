@@ -51,56 +51,44 @@ public class PromotionManager : MonoBehaviour
     {
         promotingPawn = pawn;
 
-        // KIỂM TRA MÀU QUÂN CỜ
-        if (pawn.color == PieceColor.Black) 
+        bool isAIBlack = GameManager.Instance != null &&
+                         GameManager.Instance.currentGameMode == GameMode.AI &&
+                         pawn.color == PieceColor.Black;
+
+        if (isAIBlack)
         {
-            // Nếu là quân Đen (AI), tự động phong Hậu ở chế độ chạy ngầm
+            // Nếu là quân Đen ở chế độ đấu với AI, tự động phong Hậu
             PromoteTo(PieceType.Queen);
         }
         else
         {
-            // Nếu là quân Trắng (Người chơi), bật menu lên cho bạn tự chọn
-            promotionPanel.SetActive(true);
+            // Chế độ Online (người chơi cầm Trắng hoặc Đen) hoặc Local 2P: bật menu chọn quân
+            if (promotionPanel != null)
+                promotionPanel.SetActive(true);
         }
     }
 
     public void StartPromotionFromNetwork(ChessPiece pawn, PieceType newType)
     {
-        promotingPawn = pawn;
-        PromoteTo(newType);
+        PromotePawnDirectly(pawn, newType);
     }
 
-    public void PromoteTo(PieceType newType)
+    public ChessPiece PromotePawnDirectly(ChessPiece pawn, PieceType newType)
     {
-        if (promotingPawn == null)
-        {
-            Debug.LogWarning("No pawn selected for promotion.");
-            return;
-        }
+        if (pawn == null) return null;
 
-        // Send network move if playing online and we have a pending move
-        if (GameManager.Instance != null && GameManager.Instance.currentGameMode == GameMode.Online)
-        {
-            if (!string.IsNullOrEmpty(GameManager.Instance.pendingNetworkMove))
-            {
-                GameManager.Instance.SendNetworkMove($"{GameManager.Instance.pendingNetworkMove}={newType}");
-                GameManager.Instance.pendingNetworkMove = "";
-            }
-        }
+        int row = pawn.currentRow;
+        int col = pawn.currentCol;
+        PieceColor color = pawn.color;
 
-        int row = promotingPawn.currentRow;
-        int col = promotingPawn.currentCol;
-        PieceColor color = promotingPawn.color;
-
-        // Xóa quân tốt
-        Destroy(promotingPawn.gameObject);
+        Destroy(pawn.gameObject);
         GameManager.Instance.pieceBoard[row, col] = null;
 
         GameObject prefab = GetPromotionPrefab(color, newType);
         if (prefab == null)
         {
             Debug.LogError("Promotion prefab not found!");
-            return;
+            return null;
         }
 
         Quaternion rotation = Quaternion.identity;
@@ -116,18 +104,71 @@ public class PromotionManager : MonoBehaviour
             .AddSelector()
             .Build();
 
+        newPiece.hasMoved = true;
         GameManager.Instance.pieceBoard[row, col] = newPiece;
 
-        promotionPanel.SetActive(false);
-        promotingPawn = null;
+        if (promotionPanel != null)
+            promotionPanel.SetActive(false);
+        if (promotingPawn == pawn)
+            promotingPawn = null;
+
+        return newPiece;
+    }
+
+    public void PromoteTo(PieceType newType)
+    {
+        if (promotingPawn == null)
+        {
+            Debug.LogWarning("No pawn selected for promotion.");
+            return;
+        }
+
+        ChessPiece newPiece = PromotePawnDirectly(promotingPawn, newType);
+        if (newPiece == null) return;
+
+        // Gửi nước đi kèm loại quân phong cấp sau khi bàn cờ đã cập nhật quân mới
+        if (GameManager.Instance != null && GameManager.Instance.currentGameMode == GameMode.Online)
+        {
+            if (!string.IsNullOrEmpty(GameManager.Instance.pendingNetworkMove))
+            {
+                GameManager.Instance.SendNetworkMove($"{GameManager.Instance.pendingNetworkMove}={newType}");
+                GameManager.Instance.pendingNetworkMove = null;
+            }
+        }
 
         GameManager.Instance.NotifyIfCheck();
 
-        // ✅ Kiểm tra checkmate sau khi phong
-        PieceColor opponent = GameManager.Instance.currentTurn == PieceColor.White ? PieceColor.Black : PieceColor.White;
+        PieceColor current = GameManager.Instance.currentTurn;
+        PieceColor opponent = current == PieceColor.White ? PieceColor.Black : PieceColor.White;
+
         if (GameManager.Instance.IsCheckmate(opponent))
         {
-            GameManager.Instance.EndGame(GameManager.Instance.currentTurn);
+            GameManager.Instance.EndGame(current);
+            if (GameManager.Instance.currentGameMode == GameMode.Online && SocketManager.Instance != null)
+            {
+                string winnerStr = current == PieceColor.White ? "white" : "black";
+                SocketManager.Instance.SendGameOver(winnerStr, "checkmate");
+            }
+            return;
+        }
+
+        if (GameManager.Instance.IsStalemate(opponent))
+        {
+            GameManager.Instance.EndDraw("Stalemate");
+            if (GameManager.Instance.currentGameMode == GameMode.Online && SocketManager.Instance != null)
+            {
+                SocketManager.Instance.SendGameOver("draw", "stalemate");
+            }
+            return;
+        }
+
+        if (GameManager.Instance.IsInsufficientMaterial())
+        {
+            GameManager.Instance.EndDraw("Insufficient Material");
+            if (GameManager.Instance.currentGameMode == GameMode.Online && SocketManager.Instance != null)
+            {
+                SocketManager.Instance.SendGameOver("draw", "insufficient_material");
+            }
             return;
         }
 

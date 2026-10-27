@@ -8,6 +8,49 @@ using UnityEngine.SceneManagement;
 using UnityEngine.UI;
 using static SocketIOUnity;
 
+public static class ServerConfig
+{
+    // ⚡ KHI DEPLOY LÊN RENDER: Đổi URL dưới đây thành địa chỉ Render của bạn
+    // Ví dụ: "https://chess-server-xxxx.onrender.com"
+    public const string DEFAULT_SERVER_URL = "http://localhost:11100";
+
+    public static string GetBaseUrl(string inspectorOverride = null)
+    {
+        if (PlayerPrefs.HasKey("CustomServerUrl"))
+        {
+            string prefUrl = PlayerPrefs.GetString("CustomServerUrl", "").Trim();
+            if (!string.IsNullOrEmpty(prefUrl))
+                return NormalizeUrl(prefUrl);
+        }
+
+        if (!string.IsNullOrWhiteSpace(inspectorOverride))
+        {
+            string normalizedOverride = NormalizeUrl(inspectorOverride);
+            if (!normalizedOverride.Equals("http://localhost:11100", StringComparison.OrdinalIgnoreCase))
+            {
+                return normalizedOverride;
+            }
+        }
+
+        if (SocketManager.Instance != null && !string.IsNullOrWhiteSpace(SocketManager.Instance.serverUrl))
+        {
+            string normalizedSm = NormalizeUrl(SocketManager.Instance.serverUrl);
+            if (!normalizedSm.Equals("http://localhost:11100", StringComparison.OrdinalIgnoreCase))
+            {
+                return normalizedSm;
+            }
+        }
+
+        return NormalizeUrl(DEFAULT_SERVER_URL);
+    }
+
+    public static string NormalizeUrl(string url)
+    {
+        if (string.IsNullOrWhiteSpace(url)) return DEFAULT_SERVER_URL;
+        return url.Trim().TrimEnd('/');
+    }
+}
+
 public class SocketManager : MonoBehaviour
 {
     private static SocketManager _instance;
@@ -36,7 +79,7 @@ public class SocketManager : MonoBehaviour
     public string opponentName;
 
     [Header("Connection Settings")]
-    public string serverUrl = "http://localhost:11100";
+    public string serverUrl = ServerConfig.DEFAULT_SERVER_URL;
 
     [Header("UI References (Optional - Legacy)")]
     public TMP_InputField usernameInput;
@@ -168,15 +211,20 @@ public class SocketManager : MonoBehaviour
             playerName = "Player_" + UnityEngine.Random.Range(1000, 9999);
         }
 
-        if (!PlayerPrefs.HasKey("playerIdBase"))
+        if (string.IsNullOrEmpty(playerId))
         {
-            PlayerPrefs.SetString("playerIdBase", System.Guid.NewGuid().ToString());
-            PlayerPrefs.Save();
+            if (!PlayerPrefs.HasKey("playerIdBase"))
+            {
+                PlayerPrefs.SetString("playerIdBase", System.Guid.NewGuid().ToString());
+                PlayerPrefs.Save();
+            }
+            string sessionId = System.Guid.NewGuid().ToString().Substring(0, 8);
+            playerId = PlayerPrefs.GetString("playerIdBase") + "_" + Application.dataPath.GetHashCode() + "_" + sessionId;
         }
-        string sessionId = System.Guid.NewGuid().ToString().Substring(0, 8);
-        playerId = PlayerPrefs.GetString("playerIdBase") + "_" + Application.dataPath.GetHashCode() + "_" + sessionId;
 
-        var uri = new Uri(serverUrl);
+        string resolvedUrl = ServerConfig.GetBaseUrl(serverUrl);
+        serverUrl = resolvedUrl;
+        var uri = new Uri(resolvedUrl);
         socket = new SocketIOUnity(uri, new SocketIOOptions
         {
             Query = new Dictionary<string, string> {
@@ -196,7 +244,7 @@ public class SocketManager : MonoBehaviour
 
         RegisterSocketEvents();
 
-        Debug.Log($"🔗 Connecting to server as '{playerName}'...");
+        Debug.Log($"🔗 Connecting to server ({resolvedUrl}) as '{playerName}'...");
         socket.Connect();
     }
 
@@ -278,6 +326,10 @@ public class SocketManager : MonoBehaviour
                     }
 
                     Debug.Log($"♟️ Move received from opponent: {data.move}");
+                    if (ChessClock.Instance != null && (data.whiteTime > 0f || data.blackTime > 0f))
+                    {
+                        ChessClock.Instance.SyncClockTimes(data.whiteTime, data.blackTime);
+                    }
                     OnMoveReceived?.Invoke(data.move);
 
                     if (IsBoardReady())
@@ -337,7 +389,7 @@ public class SocketManager : MonoBehaviour
             EnqueueMainThread(() =>
             {
                 isConnected = false;
-                string msg = "Could not connect to server. Is chess-server running on port 11100?";
+                string msg = $"Could not connect to server ({serverUrl}).";
                 try { msg = res.GetValue<string>(); } catch { }
                 Debug.LogError($"❌ Connection error: {msg}");
                 OnDisconnected?.Invoke();
@@ -589,7 +641,7 @@ public class SocketManager : MonoBehaviour
     [Serializable] private class JoinRoomData { public string roomId; }
     [Serializable] private class ErrorData { public string error; }
     [Serializable] private class GameStartData { public string roomId; public string color; public string opponentName; }
-    [Serializable] private class MoveData { public string move; }
+    [Serializable] private class MoveData { public string move; public float whiteTime; public float blackTime; }
     [Serializable] private class GameOverData { public string winner; public string reason; }
     [Serializable] private class DisconnectData { public string message; }
 }

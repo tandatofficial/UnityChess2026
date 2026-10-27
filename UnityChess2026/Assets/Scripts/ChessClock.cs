@@ -111,6 +111,7 @@ public class ChessClock : MonoBehaviour
     {
         subPanelInstance = null;
         settingsPanelInstance = null;
+        ResetClock();
         StartCoroutine(InjectClockButtonToDifficultyMenuCoroutine());
     }
 
@@ -273,7 +274,8 @@ public class ChessClock : MonoBehaviour
 
         if (isMatchActive && isClockEnabled)
         {
-            bool shouldRunClock = Time.timeScale > 0f;
+            bool isPausedForNet = GameManager.Instance != null && GameManager.Instance.isPausedForReconnect;
+            bool shouldRunClock = Time.timeScale > 0f && !isPausedForNet;
 
             if (shouldRunClock)
             {
@@ -380,8 +382,8 @@ public class ChessClock : MonoBehaviour
     {
         if (!isClockEnabled) return;
 
-        // If starting a fresh match (or recreating HUD), initialize times if they aren't initialized yet
-        if (!isClockRunning || whiteTimeRemaining <= 0f)
+        // Initialize times only when starting a fresh match (not when resuming from pause)
+        if (whiteTimeRemaining <= 0f && blackTimeRemaining <= 0f)
         {
             whiteTimeRemaining = baseTimeSeconds;
             blackTimeRemaining = baseTimeSeconds;
@@ -396,6 +398,25 @@ public class ChessClock : MonoBehaviour
         CreateGameplayClockHUD();
         UpdateClockUI();
         Debug.Log("Chess Clock HUD created & clock started.");
+    }
+
+    public void ResetClock()
+    {
+        isClockRunning = false;
+        whiteTimeRemaining = baseTimeSeconds;
+        blackTimeRemaining = baseTimeSeconds;
+        lastTurn = PieceColor.White;
+        delayTimeRemaining = (clockMode == ClockMode.SimpleDelay) ? incrementSeconds : 0f;
+        lastTickSecondWhite = -1f;
+        lastTickSecondBlack = -1f;
+        UpdateClockUI();
+    }
+
+    public void SyncClockTimes(float whiteTime, float blackTime)
+    {
+        if (whiteTime > 0f) whiteTimeRemaining = whiteTime;
+        if (blackTime > 0f) blackTimeRemaining = blackTime;
+        UpdateClockUI();
     }
 
     public void StopClock()

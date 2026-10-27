@@ -36,6 +36,9 @@ public class AccountManager
 
 public class Login : MonoBehaviour
 {
+    [Header("Server Settings")]
+    public string serverUrl = ServerConfig.DEFAULT_SERVER_URL;
+
     [Header("Scene Settings")]
     public string mainMenuSceneName = "PvPOff";
     public string loginSceneName = "HomeUI";
@@ -309,7 +312,7 @@ public class Login : MonoBehaviour
     private IEnumerator RegisterCoroutine(string username, string email, string password)
     {
         SetFeedback("Registering...", true);
-        string url = "http://localhost:11100/api/auth/register";
+        string url = $"{ServerConfig.GetBaseUrl(serverUrl)}/api/auth/register";
 
         RegisterData data = new RegisterData { username = username, email = email, password = password };
         string json = JsonUtility.ToJson(data);
@@ -359,7 +362,7 @@ public class Login : MonoBehaviour
     private IEnumerator VerifyCoroutine(string email, string code)
     {
         SetFeedback("Verifying...", true);
-        string url = "http://localhost:11100/api/auth/verify";
+        string url = $"{ServerConfig.GetBaseUrl(serverUrl)}/api/auth/verify";
 
         VerifyData data = new VerifyData { email = email, code = code };
         string json = JsonUtility.ToJson(data);
@@ -395,7 +398,7 @@ public class Login : MonoBehaviour
     private IEnumerator LoginCoroutine(string id, string pw)
     {
         SetFeedback("Logging in...", true);
-        string url = "http://localhost:11100/api/auth/login";
+        string url = $"{ServerConfig.GetBaseUrl(serverUrl)}/api/auth/login";
 
         LoginData data = new LoginData { usernameOrEmail = id, password = pw };
         string json = JsonUtility.ToJson(data);
