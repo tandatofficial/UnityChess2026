@@ -12,14 +12,14 @@ public static class ServerConfig
 {
     // ⚡ KHI DEPLOY LÊN RENDER: Đổi URL dưới đây thành địa chỉ Render của bạn
     // Ví dụ: "https://chess-server-xxxx.onrender.com"
-    public const string DEFAULT_SERVER_URL = "http://localhost:11100";
+    public const string DEFAULT_SERVER_URL = "https://unity-chess-server.onrender.com";
 
     public static string GetBaseUrl(string inspectorOverride = null)
     {
         if (PlayerPrefs.HasKey("CustomServerUrl"))
         {
             string prefUrl = PlayerPrefs.GetString("CustomServerUrl", "").Trim();
-            if (!string.IsNullOrEmpty(prefUrl))
+            if (!string.IsNullOrEmpty(prefUrl)) 
                 return NormalizeUrl(prefUrl);
         }
 
