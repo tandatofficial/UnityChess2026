@@ -115,6 +115,12 @@ public class PromotionManager : MonoBehaviour
         return newPiece;
     }
 
+    public void CancelOnlinePromotion()
+    {
+        promotingPawn = null;
+        if (promotionPanel != null) promotionPanel.SetActive(false);
+    }
+
     public void PromoteTo(PieceType newType)
     {
         if (promotingPawn == null)
@@ -123,6 +129,15 @@ public class PromotionManager : MonoBehaviour
             return;
         }
 
+        if (GameManager.Instance.currentGameMode == GameMode.Online)
+        {
+            if (SocketManager.Instance == null || !SocketManager.Instance.CanSubmitMove) return;
+            if (!string.IsNullOrEmpty(GameManager.Instance.pendingNetworkMove))
+                GameManager.Instance.SendNetworkMove($"{GameManager.Instance.pendingNetworkMove}={newType}");
+            GameManager.Instance.pendingNetworkMove = null;
+            CancelOnlinePromotion();
+            return;
+        }
         ChessPiece newPiece = PromotePawnDirectly(promotingPawn, newType);
         if (newPiece == null) return;
 
@@ -136,6 +151,7 @@ public class PromotionManager : MonoBehaviour
             }
         }
 
+        if (GameManager.Instance.currentGameMode == GameMode.Online) return;
         GameManager.Instance.NotifyIfCheck();
 
         PieceColor current = GameManager.Instance.currentTurn;

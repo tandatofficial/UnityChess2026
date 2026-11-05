@@ -1,6 +1,7 @@
 const path = require('path');
 const dotenv = require('dotenv');
-dotenv.config({ path: path.join(__dirname, '.env'), override: true });
+dotenv.config({ path: path.join(__dirname, '.env') });
+const { issueSession } = require('./session');
 const express = require('express');
 const cors = require('cors');
 const http = require('http');
@@ -16,7 +17,18 @@ const PORT = process.env.PORT || 11100;
 
 const app = express();
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '16kb' }));
+const attempts = new Map();
+app.use('/api/auth', (req, res, next) => {
+  const now = Date.now();
+  for (const [key, value] of attempts) if (value.until < now) attempts.delete(key);
+  const entry = attempts.get(req.ip) || { count: 0, until: now + 60000 };
+  attempts.set(req.ip, entry);
+  if (++entry.count > 20) return res.status(429).json({ error: 'Too many requests. Try again in a minute.' });
+  if (!req.body || typeof req.body !== 'object' || Object.values(req.body).some(v => typeof v !== 'string' || v.length > 256))
+    return res.status(400).json({ error: 'Invalid request fields.' });
+  next();
+});
 
 // Initialize Supabase Client safely
 const supabaseUrl = process.env.SUPABASE_URL;
@@ -29,8 +41,10 @@ if (!supabaseUrl || !supabaseKey) {
 }
 
 // Crypto Helpers
-function hashPassword(password, salt) {
-  return crypto.pbkdf2Sync(password, Buffer.from(salt, 'hex'), 10000, 32, 'sha256').toString('hex');
+async function hashPassword(password, salt, legacy = false) {
+  const iterations = legacy ? 10000 : 600000;
+  const hash = await new Promise((resolve, reject) => crypto.pbkdf2(password, Buffer.from(salt, 'hex'), iterations, 32, 'sha256', (error, value) => error ? reject(error) : resolve(value.toString('hex'))));
+  return legacy ? hash : 'pbkdf2-sha256:600000:' + hash;
 }
 
 function generateSalt() {
@@ -65,7 +79,6 @@ if (isGmailConfigured) {
 }
 
 async function sendVerificationEmail(email, code) {
-  console.log(`✉️ Verification code for [${email}] is: ${code}`);
   
   const isMailtrapConfigured = process.env.MAILTRAP_USER && 
                                process.env.MAILTRAP_PASS && 
@@ -74,8 +87,7 @@ async function sendVerificationEmail(email, code) {
                                !process.env.MAILTRAP_USER.includes("@gmail.com");
 
   if (!isGmailConfigured && !isMailtrapConfigured) {
-    console.log("⚠️ No SMTP credentials configured. Verification email was not sent, but you can use the code printed above.");
-    return;
+    throw new Error('Email delivery is not configured');
   }
 
   const mailOptions = {
@@ -90,7 +102,8 @@ async function sendVerificationEmail(email, code) {
     await transporter.sendMail(mailOptions);
     console.log(`📬 Verification email sent successfully to ${email}`);
   } catch (error) {
-    console.error("❌ Error sending email:", error);
+    console.error("Email delivery failed");
+    throw error;
   }
 }
 
@@ -173,6 +186,8 @@ app.post('/api/auth/register', async (req, res) => {
   }
 
   try {
+    if (!/^[a-zA-Z0-9_]{3,32}$/.test(username) || !/^[^\s@,%()]+@[^\s@,%()]+\.[^\s@,%()]+$/.test(email) || password.length < 8)
+      return res.status(400).json({ error: 'Use a 3-32 character username (letters, digits, underscore), valid email and password of at least 8 characters.' });
     // Check duplicate email
     const { data: existingEmail, error: emailErr } = await supabase
       .from('game_users')
@@ -205,8 +220,8 @@ app.post('/api/auth/register', async (req, res) => {
 
     // Create User
     const salt = generateSalt();
-    const passwordHash = hashPassword(password, salt);
-    const code = Math.floor(100000 + Math.random() * 900000).toString(); // 6-digit code
+    const passwordHash = await hashPassword(password, salt);
+    const code = crypto.randomInt(100000, 1000000).toString(); // 6-digit code
     const expiry = Date.now() + 10 * 60 * 1000; // 10 minutes from now
 
     const { error: insertErr } = await supabase
@@ -226,18 +241,13 @@ app.post('/api/auth/register', async (req, res) => {
       return res.status(500).json({ error: "Failed to create user in database." });
     }
 
-    await sendVerificationEmail(email, code);
-
-    const isMailtrapConfigured = process.env.MAILTRAP_USER && 
-                                 process.env.MAILTRAP_PASS && 
-                                 !process.env.MAILTRAP_USER.includes("your_mailtrap") && 
-                                 !process.env.MAILTRAP_PASS.includes("your_mailtrap");
-
-    if (isGmailConfigured || isMailtrapConfigured) {
-      res.json({ message: "Registration successful. Please check your email for the verification code." });
-    } else {
-      res.json({ message: `Registration successful. [TEST MODE] Code is: ${code}` });
+    try { await sendVerificationEmail(email, code); }
+    catch (error) {
+      await supabase.from('game_users').delete().eq('email', email).eq('is_verified', false);
+      return res.status(503).json({ error: 'Verification email could not be sent. Please try again later.' });
     }
+
+    res.json({ message: "Registration successful. Please check your email for the verification code." });
   } catch (err) {
     console.error("❌ Register error:", err);
     res.status(500).json({ error: "Internal server error." });
@@ -362,7 +372,7 @@ app.post('/api/auth/login', async (req, res) => {
     const { data: user, error: queryErr } = await supabase
       .from('game_users')
       .select('*')
-      .or(`email.ilike.${usernameOrEmail},username.ilike.${usernameOrEmail}`)
+      .ilike(usernameOrEmail.includes('@') ? 'email' : 'username', usernameOrEmail.replace(/[%_\\]/g, c => String.fromCharCode(92) + c))
       .maybeSingle();
 
     if (queryErr || !user) {
@@ -370,8 +380,8 @@ app.post('/api/auth/login', async (req, res) => {
       return res.status(400).json({ error: "Account not found." });
     }
 
-    const computedHash = hashPassword(password, user.salt);
-    if (computedHash !== user.password_hash) {
+    const computedHash = await hashPassword(password, user.salt, !user.password_hash.startsWith('pbkdf2-sha256:600000:'));
+    if (computedHash.length !== user.password_hash.length || !crypto.timingSafeEqual(Buffer.from(computedHash), Buffer.from(user.password_hash))) {
       return res.status(400).json({ error: "Invalid password." });
     }
 
@@ -381,11 +391,10 @@ app.post('/api/auth/login', async (req, res) => {
 
     res.json({
       message: "Login successful.",
+      token: issueSession(user),
       user: {
         username: user.username,
-        email: user.email,
-        passwordHash: user.password_hash,
-        salt: user.salt
+        email: user.email
       }
     });
   } catch (err) {
@@ -400,499 +409,24 @@ const io = new Server(server, {
   cors: {
     origin: "*"
   },
-  pingTimeout: 20000,
-  pingInterval: 25000
+  maxHttpBufferSize: 16384,
+  pingTimeout: 10000,
+  pingInterval: 5000
 });
 
 // ----------------------------------------------------
 // Room-Based Multiplayer System
 // ----------------------------------------------------
 
-const rooms = new Map(); // roomId -> RoomState
-const playerRoomMap = new Map(); // playerId -> roomId
-
-app.get('/', (req, res) => {
-  res.status(200).json({
-    status: 'online',
-    service: 'UnityChess2026 Multiplayer Server',
-    activeRooms: rooms.size,
-    swaggerDocs: '/api-docs'
-  });
-});
-
-function generateRoomId() {
-  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-  let id = '';
-  for (let i = 0; i < 6; i++) {
-    id += chars.charAt(Math.floor(Math.random() * chars.length));
-  }
-  return id;
-}
-
-function createRoomState(roomId) {
-  return {
-    roomId,
-    white: null,         // socket.id
-    black: null,         // socket.id
-    whitePlayerId: null, // UUID
-    blackPlayerId: null, // UUID
-    whiteName: null,
-    blackName: null,
-    status: 'waiting',   // waiting | playing | reconnecting | finished
-    moves: [],
-    currentTurn: 'white',
-    boardState: null,
-    whiteTime: -1,
-    blackTime: -1,
-    reconnectTimer: null,
-    rematchRequests: new Set(),
-    rematchReadyCount: 0,
-    cleanupTimer: null
-  };
-}
-
-function getPlayerRoom(playerId) {
-  const roomId = playerRoomMap.get(playerId);
-  if (roomId) return rooms.get(roomId);
-  return null;
-}
-
-function getOpponentId(room, playerId) {
-  if (room.whitePlayerId === playerId) return room.black;
-  if (room.blackPlayerId === playerId) return room.white;
-  return null;
-}
-
-function broadcastAvailableRooms() {
-  const availableRooms = [];
-  for (const [roomId, room] of rooms.entries()) {
-    if (room.status === 'waiting' && !room.isPrivate) {
-      availableRooms.push({
-        roomId: room.roomId,
-        creatorName: room.whiteName
-      });
-    }
-  }
-  io.emit("availableRoomsList", JSON.stringify({ rooms: availableRooms }));
-}
-
-function cleanupRoom(roomId) {
-  const room = rooms.get(roomId);
-  if (room) {
-    if (room.whitePlayerId) playerRoomMap.delete(room.whitePlayerId);
-    if (room.blackPlayerId) playerRoomMap.delete(room.blackPlayerId);
-    if (room.reconnectTimer) clearTimeout(room.reconnectTimer);
-    rooms.delete(roomId);
-    console.log(`🗑️ Room ${roomId} cleaned up. Active rooms: ${rooms.size}`);
-    broadcastAvailableRooms();
-  }
-}
-
-// Socket.IO Authentication
-io.use((socket, next) => {
-  if (socket.handshake.query.token === "UNITY") {
-    next();
-  } else {
-    next(new Error("Authentication failed"));
-  }
-});
-
-// Socket.IO Connection Handler
-io.on("connection", (socket) => {
-  const playerName = socket.handshake.query.name || "Unknown";
-  const playerId = socket.handshake.query.playerId;
-  console.log(`🔌 Connected: ${socket.id} (Player: ${playerId}, Name: ${playerName})`);
-
-  if (!playerId) {
-    socket.disconnect();
-    return;
-  }
-
-  // --- RECONNECTION LOGIC ---
-  const existingRoom = getPlayerRoom(playerId);
-  if (existingRoom && existingRoom.status !== 'finished') {
-    const isWhite = existingRoom.whitePlayerId === playerId;
-    if (isWhite) existingRoom.white = socket.id;
-    else existingRoom.black = socket.id;
-
-    if (existingRoom.reconnectTimer) {
-      clearTimeout(existingRoom.reconnectTimer);
-      existingRoom.reconnectTimer = null;
-    }
-
-    if (existingRoom.status === 'reconnecting') {
-      existingRoom.status = 'playing';
-    }
-
-    socket.join(existingRoom.roomId);
-
-    const opponentSocketId = isWhite ? existingRoom.black : existingRoom.white;
-    if (opponentSocketId) {
-      io.to(opponentSocketId).emit("opponentReconnected", JSON.stringify({ message: "Opponent returned" }));
-    }
-
-    socket.emit("reconnectSuccess", JSON.stringify({
-      roomId: existingRoom.roomId,
-      color: isWhite ? "white" : "black",
-      boardState: existingRoom.boardState,
-      currentTurn: existingRoom.currentTurn,
-      whiteTime: existingRoom.whiteTime,
-      blackTime: existingRoom.blackTime
-    }));
-
-    console.log(`🔄 ${playerName} reconnected to room ${existingRoom.roomId}`);
-  }
-
-  // --- GET AVAILABLE ROOMS ---
-  socket.on("getAvailableRooms", () => {
-    const availableRooms = [];
-    for (const [rId, rm] of rooms.entries()) {
-      if (rm.status === 'waiting' && !rm.isPrivate) {
-        availableRooms.push({
-          roomId: rm.roomId,
-          creatorName: rm.whiteName
-        });
-      }
-    }
-    socket.emit("availableRoomsList", JSON.stringify({ rooms: availableRooms }));
-  });
-
-  // Send initial room list on connection
-  {
-    const availableRooms = [];
-    for (const [rId, rm] of rooms.entries()) {
-      if (rm.status === 'waiting' && !rm.isPrivate) {
-        availableRooms.push({
-          roomId: rm.roomId,
-          creatorName: rm.whiteName
-        });
-      }
-    }
-    socket.emit("availableRoomsList", JSON.stringify({ rooms: availableRooms }));
-  }
-
-  // --- CREATE ROOM ---
-  socket.on("createRoom", (data) => {
-    // Ensure cleanup of any old room this player was in
-    const oldRoom = getPlayerRoom(playerId);
-    if (oldRoom) {
-      cleanupRoom(oldRoom.roomId);
-    }
-
-    let roomId = generateRoomId();
-    while (rooms.has(roomId)) {
-      roomId = generateRoomId();
-    }
-
-    let isPrivate = false;
-    if (data) {
-      try {
-        const parsed = typeof data === 'string' ? JSON.parse(data) : data;
-        isPrivate = !!parsed.isPrivate;
-      } catch (e) {
-        console.error("Error parsing createRoom data:", e);
-      }
-    }
-
-    const room = createRoomState(roomId);
-    room.white = socket.id;
-    room.whitePlayerId = playerId;
-    room.whiteName = playerName;
-    room.isPrivate = isPrivate;
-    rooms.set(roomId, room);
-    playerRoomMap.set(playerId, roomId);
-
-    socket.join(roomId);
-    socket.emit("roomCreated", JSON.stringify({ roomId }));
-    console.log(`🏠 Room ${roomId} (private: ${isPrivate}) created by ${playerName} (white). Active rooms: ${rooms.size}`);
-    broadcastAvailableRooms();
-  });
-
-  // --- LEAVE ROOM ---
-  socket.on("leaveRoom", () => {
-    const room = getPlayerRoom(playerId);
-    if (!room) return;
-
-    if (room.status === 'playing') {
-      const isWhite = room.whitePlayerId === playerId;
-      const opponentSocketId = isWhite ? room.black : room.white;
-      
-      if (opponentSocketId) {
-        io.to(opponentSocketId).emit("gameOver", JSON.stringify({
-          winner: isWhite ? "black" : "white",
-          reason: `${playerName} left the room`,
-        }));
-      }
-    }
-    
-    cleanupRoom(room.roomId);
-  });
-
-  // --- JOIN ROOM ---
-  socket.on("joinRoom", (data) => {
-    let parsed;
-    try {
-      parsed = typeof data === 'string' ? JSON.parse(data) : data;
-    } catch (e) {
-      parsed = { roomId: data };
-    }
-
-    const roomId = parsed.roomId ? parsed.roomId.toUpperCase() : null;
-    const room = rooms.get(roomId);
-
-    if (!room) {
-      socket.emit("joinError", JSON.stringify({ error: "Room not found." }));
-      return;
-    }
-
-    if (room.status !== 'waiting') {
-      socket.emit("joinError", JSON.stringify({ error: "Room is already full or playing." }));
-      return;
-    }
-
-    if (room.whitePlayerId === playerId) {
-      socket.emit("joinError", JSON.stringify({ error: "You cannot join your own room." }));
-      return;
-    }
-
-    const oldRoom = getPlayerRoom(playerId);
-    if (oldRoom && oldRoom.roomId !== roomId) {
-       cleanupRoom(oldRoom.roomId);
-    }
-
-    room.black = socket.id;
-    room.blackPlayerId = playerId;
-    room.blackName = playerName;
-    room.status = 'playing';
-    playerRoomMap.set(playerId, roomId);
-
-    socket.join(roomId);
-
-    io.to(room.white).emit("gameStart", JSON.stringify({
-      roomId: room.roomId,
-      color: "white",
-      opponentName: room.blackName,
-    }));
-
-    io.to(room.black).emit("gameStart", JSON.stringify({
-      roomId: room.roomId,
-      color: "black",
-      opponentName: room.whiteName,
-    }));
-
-    console.log(`🎮 Game started in room ${roomId}: ${room.whiteName} vs ${room.blackName}`);
-    broadcastAvailableRooms();
-  });
-
-  // --- MOVE ---
-  socket.on("move", (data) => {
-    const room = getPlayerRoom(playerId);
-    if (!room || room.status !== 'playing') {
-      return;
-    }
-
-    const isWhite = room.whitePlayerId === playerId;
-    const expectedTurn = isWhite ? 'white' : 'black';
-
-    if (room.currentTurn !== expectedTurn) return;
-
-    let parsed;
-    try {
-      parsed = typeof data === 'string' ? JSON.parse(data) : data;
-    } catch (e) {
-      parsed = { move: data };
-    }
-
-    const moveStr = parsed.move || data;
-    room.boardState = parsed.boardState || room.boardState;
-    if (typeof parsed.whiteTime === 'number' && parsed.whiteTime > 0) room.whiteTime = parsed.whiteTime;
-    if (typeof parsed.blackTime === 'number' && parsed.blackTime > 0) room.blackTime = parsed.blackTime;
-
-    room.moves.push({
-      player: expectedTurn,
-      move: moveStr,
-      timestamp: Date.now(),
-    });
-
-    room.currentTurn = room.currentTurn === 'white' ? 'black' : 'white';
-
-    const opponentSocketId = isWhite ? room.black : room.white;
-    io.to(opponentSocketId).emit("move", JSON.stringify({
-      move: moveStr,
-      whiteTime: room.whiteTime,
-      blackTime: room.blackTime
-    }));
-    console.log(`♟️ [${room.roomId}] ${playerName} (${expectedTurn}): ${moveStr} | Turn -> ${room.currentTurn}`);
-  });
-
-  // --- GAME OVER ---
-  socket.on("gameOver", (data) => {
-    const room = getPlayerRoom(playerId);
-    if (!room || room.status !== 'playing') return;
-
-    let parsed;
-    try {
-      parsed = typeof data === 'string' ? JSON.parse(data) : data;
-    } catch (e) {
-      parsed = { winner: "unknown", reason: "unknown" };
-    }
-
-    room.status = 'finished';
-
-    io.to(room.roomId).emit("gameOver", JSON.stringify({
-      winner: parsed.winner || "unknown",
-      reason: parsed.reason || "unknown",
-    }));
-
-    console.log(`🏁 [${room.roomId}] Game over: ${parsed.reason} | Winner: ${parsed.winner}`);
-
-    room.cleanupTimer = setTimeout(() => cleanupRoom(room.roomId), 30000);
-  });
-
-  // --- RESIGN ---
-  socket.on("resign", () => {
-    const room = getPlayerRoom(playerId);
-    if (!room || room.status !== 'playing') return;
-
-    const isWhite = room.whitePlayerId === playerId;
-    const winner = isWhite ? "black" : "white";
-    const loserName = isWhite ? room.whiteName : room.blackName;
-
-    room.status = 'finished';
-
-    io.to(room.roomId).emit("gameOver", JSON.stringify({
-      winner,
-      reason: `${loserName} resigned`,
-    }));
-
-    console.log(`🏳️ [${room.roomId}] ${loserName} resigned. ${winner} wins!`);
-    room.cleanupTimer = setTimeout(() => cleanupRoom(room.roomId), 30000);
-  });
-
-  // --- REQUEST REMATCH ---
-  socket.on("requestRematch", () => {
-    const room = getPlayerRoom(playerId);
-    if (!room || room.status !== 'finished') return;
-
-    room.rematchRequests.add(playerId);
-    console.log(`🔄 [${room.roomId}] Player ${playerName} (${playerId}) requested a rematch. Count: ${room.rematchRequests.size}`);
-
-    if (room.rematchRequests.size === 1) {
-      // Notify the other player
-      const isWhite = room.whitePlayerId === playerId;
-      const opponentSocketId = isWhite ? room.black : room.white;
-      if (opponentSocketId) {
-        io.to(opponentSocketId).emit("opponentRequestedRematch", JSON.stringify({ message: "Opponent wants a rematch" }));
-      }
-    } else if (room.rematchRequests.size === 2) {
-      // Cancel room cleanup timer
-      if (room.cleanupTimer) {
-        clearTimeout(room.cleanupTimer);
-        room.cleanupTimer = null;
-      }
-      // Notify both players that rematch is agreed
-      io.to(room.roomId).emit("rematchAgreed", JSON.stringify({ message: "Rematch agreed" }));
-      room.rematchReadyCount = 0;
-      console.log(`🤝 [${room.roomId}] Rematch agreed by both players!`);
-    }
-  });
-
-  // --- PLAYER READY FOR REMATCH ---
-  socket.on("playerReadyForRematch", () => {
-    const room = getPlayerRoom(playerId);
-    if (!room) return;
-
-    room.rematchReadyCount++;
-    console.log(`🆕 [${room.roomId}] Player ${playerName} is ready for rematch. Ready count: ${room.rematchReadyCount}`);
-
-    if (room.rematchReadyCount === 2) {
-      // Swap colors
-      const oldWhite = room.white;
-      const oldWhitePlayerId = room.whitePlayerId;
-      const oldWhiteName = room.whiteName;
-
-      room.white = room.black;
-      room.whitePlayerId = room.blackPlayerId;
-      room.whiteName = room.blackName;
-
-      room.black = oldWhite;
-      room.blackPlayerId = oldWhitePlayerId;
-      room.blackName = oldWhiteName;
-
-      // Reset room state
-      room.status = 'playing';
-      room.moves = [];
-      room.currentTurn = 'white';
-      room.boardState = null;
-      room.whiteTime = -1;
-      room.blackTime = -1;
-      room.rematchRequests.clear();
-      room.rematchReadyCount = 0;
-
-      // Start the game with swapped colors
-      io.to(room.white).emit("gameStart", JSON.stringify({
-        roomId: room.roomId,
-        color: "white",
-        opponentName: room.blackName,
-      }));
-
-      io.to(room.black).emit("gameStart", JSON.stringify({
-        roomId: room.roomId,
-        color: "black",
-        opponentName: room.whiteName,
-      }));
-
-      console.log(`🎮 Rematch game started in room ${room.roomId}: ${room.whiteName} (white) vs ${room.blackName} (black)`);
-    }
-  });
-
-  // --- DISCONNECT ---
-  socket.on("disconnect", () => {
-    console.log(`❌ Disconnected: ${socket.id} (Player: ${playerId}, Name: ${playerName})`);
-
-    const room = getPlayerRoom(playerId);
-    if (!room) return;
-
-    if (room.status === 'waiting') {
-      cleanupRoom(room.roomId);
-      return;
-    }
-
-    if (room.status === 'playing') {
-      room.status = 'reconnecting';
-      const isWhite = room.whitePlayerId === playerId;
-      const opponentSocketId = isWhite ? room.black : room.white;
-
-      if (opponentSocketId) {
-        io.to(opponentSocketId).emit("opponentDisconnected", JSON.stringify({
-          message: `${playerName} disconnected. Waiting 30s...`,
-        }));
-      }
-
-      room.reconnectTimer = setTimeout(() => {
-        const currentRoom = rooms.get(room.roomId);
-        if (!currentRoom) return;
-
-        if (currentRoom.status === 'reconnecting') {
-           currentRoom.status = 'finished';
-           const winner = isWhite ? "black" : "white";
-           
-           if (opponentSocketId) {
-             io.to(opponentSocketId).emit("gameOver", JSON.stringify({
-               winner,
-               reason: `${playerName} abandoned the match`,
-             }));
-           }
-           setTimeout(() => cleanupRoom(room.roomId), 10000);
-        }
-      }, 30000);
-    }
-  });
-});
+const multiplayer = require('./multiplayer').attachMultiplayer(io);
+app.get('/', (req, res) => res.json({ status: 'online', activeRooms: multiplayer.rooms.size }));
+function shutdown() { multiplayer.close(); io.close(); server.close(() => process.exit(0)); }
+process.on('SIGTERM', shutdown);
+process.on('SIGINT', shutdown);
 
 server.listen(PORT, '0.0.0.0', () => {
   const baseUrl = process.env.RENDER_EXTERNAL_URL || `http://localhost:${PORT}`;
-  console.log(`🟢 Chess server running on port ${PORT}`);
+  console.log(`🟢 Chess server running on port ${server.address().port}`);
   console.log(`📄 Swagger docs available at ${baseUrl}/api-docs`);
   console.log(`🩺 Health check available at ${baseUrl}/health`);
   console.log(`🎮 Room-based multiplayer system active.`);

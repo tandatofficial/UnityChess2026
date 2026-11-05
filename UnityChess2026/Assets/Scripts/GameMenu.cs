@@ -298,6 +298,8 @@ public class GameMenu : MonoBehaviour
 
     public void Logout()
     {
+        OnlineSession.Token = null;
+        if (SocketManager.Instance != null) { SocketManager.Instance.LeaveRoom(); SocketManager.Instance.Disconnect(); }
         AccountManager.Instance.Logout();
 
         PlayerPrefs.DeleteKey("loggedInUser");

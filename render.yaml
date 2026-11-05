@@ -4,10 +4,18 @@ services:
     runtime: node
     rootDir: chess-server
     plan: free
-    buildCommand: npm install
+    buildCommand: npm ci --omit=dev
     startCommand: npm start
     healthCheckPath: /health
     envVars:
+      - key: SESSION_SECRET
+        generateValue: true
+      - key: MATCH_STATE_FILE
+        value: ./data/matches.json
+      - key: MATCH_SECONDS
+        value: 600
+      - key: NODE_VERSION
+        value: 22
       - key: NODE_ENV
         value: production
       - key: SUPABASE_URL

@@ -375,7 +375,7 @@ public class OnlineLobbyUI : MonoBehaviour
         {
             if (GameManager.Instance != null)
             {
-                GameManager.Instance.LoadBoardState(data.boardState);
+                GameManager.Instance.ApplyOnlineState(data.boardState, false);
                 if (!string.IsNullOrEmpty(data.currentTurn))
                 {
                     GameManager.Instance.currentTurn = (data.currentTurn == "black") ? PieceColor.Black : PieceColor.White;
@@ -411,7 +411,7 @@ public class OnlineLobbyUI : MonoBehaviour
         ShowToastMessage("Opponent disconnected. Waiting 30s...");
     }
 
-    private void ShowToastMessage(string msg) => Debug.Log(msg);
+    private void ShowToastMessage(string msg) { Debug.Log(msg); if (statusText != null) statusText.text = msg; }
 
     private void HandleJoinError(string error)
     {
@@ -422,7 +422,7 @@ public class OnlineLobbyUI : MonoBehaviour
     private void HandleGameOver(string winner, string reason)
     {
         Debug.Log($"[OnlineLobbyUI] Game Over. Winner: {winner}, Reason: {reason}");
-        if (GameManager.Instance != null) GameManager.Instance.HandleNetworkGameOver(winner, reason);
+        // SocketManager has already applied the authoritative result.
     }
 
     [System.Serializable] private class AvailableRoomData { public string roomId; public string creatorName; }
@@ -637,6 +637,7 @@ public class OnlineLobbyUI : MonoBehaviour
         }
 
         onSceneLoaded?.Invoke();
+        if (SocketManager.Instance != null) SocketManager.Instance.MarkBoardReady();
         if (GameManager.Instance != null) GameManager.Instance.UpdatePieceColliders();
     }
 

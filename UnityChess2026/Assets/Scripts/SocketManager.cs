@@ -106,6 +106,46 @@ public class SocketManager : MonoBehaviour
     public event Action<string> OnAvailableRoomsListReceived; // json string containing { rooms: [...] }
 
     private bool applicationQuitting = false;
+    private ServerState latestState;
+    private bool boardReadyForSync;
+    private bool stateDirty;
+    private bool awaitingMove;
+    private float moveSentAt;
+    private string endedMatch;
+    public bool CanSubmitMove => IsConnected && boardReadyForSync && !awaitingMove && latestState != null && latestState.status == "playing";
+    public void MarkBoardReady() { boardReadyForSync = true; stateDirty = latestState != null; }
+    public List<Vector2Int> LegalTargets(int row, int col)
+    {
+        var result = new List<Vector2Int>();
+        if (latestState?.legalMoves == null) return result;
+        string prefix = row + "," + col + "->";
+        foreach (string move in latestState.legalMoves)
+            if (move.StartsWith(prefix)) { string[] target = move.Substring(prefix.Length).Split(','); var p = new Vector2Int(int.Parse(target[0]), int.Parse(target[1])); if (!result.Contains(p)) result.Add(p); }
+        return result;
+    }
+    [Serializable] private class ServerState
+    {
+        public string roomId, matchId, boardState, currentTurn, status, winner, reason;
+        public int revision;
+        public float whiteTime, blackTime;
+        public string[] legalMoves;
+        public PieceData[] captured;
+    }
+    private void ApplyServerState()
+    {
+        if (!stateDirty || !boardReadyForSync || !IsBoardReady() || latestState == null) return;
+        stateDirty = false;
+        var gm = GameManager.Instance;
+        gm.ApplyOnlineState(latestState.boardState, latestState.status != "playing");
+        if (CaptureManager.Instance != null) CaptureManager.Instance.SyncOnlineCaptured(latestState.captured);
+        if (ChessClock.Instance != null) ChessClock.Instance.SyncClockTimes(latestState.whiteTime, latestState.blackTime);
+        if (latestState.status == "finished" && endedMatch != latestState.matchId)
+        {
+            endedMatch = latestState.matchId;
+            gm.HandleNetworkGameOver(latestState.winner, latestState.reason);
+            OnGameOver?.Invoke(latestState.winner, latestState.reason);
+        }
+    }
     public string playerId { get; private set; }
 
     private void Awake()
@@ -165,6 +205,9 @@ public class SocketManager : MonoBehaviour
             action?.Invoke();
         }
 
+        ApplyServerState();
+        if (awaitingMove && IsConnected && Time.realtimeSinceStartup - moveSentAt > 5f)
+        { moveSentAt = Time.realtimeSinceStartup; socket.Emit("requestState"); }
         if (pendingNetworkMoves.Count > 0 && IsBoardReady())
         {
             string move = pendingNetworkMoves.Dequeue();
@@ -204,6 +247,8 @@ public class SocketManager : MonoBehaviour
             socket = null;
         }
 
+        if (string.IsNullOrEmpty(OnlineSession.Token))
+        { Debug.LogError("Please log in before playing online."); OnJoinError?.Invoke("Please log in again to play online."); return; }
         playerName = name;
 
         if (string.IsNullOrWhiteSpace(playerName))
@@ -228,13 +273,13 @@ public class SocketManager : MonoBehaviour
         socket = new SocketIOUnity(uri, new SocketIOOptions
         {
             Query = new Dictionary<string, string> {
-                { "token", "UNITY" },
+                { "token", OnlineSession.Token },
                 { "name", playerName },
                 { "playerId", playerId }
             },
             Transport = SocketIOClient.Transport.TransportProtocol.WebSocket,
             Reconnection = true,
-            ReconnectionAttempts = 5,
+            ReconnectionAttempts = 30,
             ReconnectionDelay = 1000,
         });
 
@@ -285,6 +330,7 @@ public class SocketManager : MonoBehaviour
                 string json = res.GetValue<string>();
                 var data = JsonUtility.FromJson<GameStartData>(json);
 
+                boardReadyForSync = false; latestState = null; awaitingMove = false; endedMatch = null; pendingNetworkMoves.Clear();
                 currentRoomId = data.roomId;
                 opponentName = data.opponentName;
                 assignedColor = (data.color == "white") ? PieceColor.White : PieceColor.Black;
@@ -350,18 +396,22 @@ public class SocketManager : MonoBehaviour
             });
         });
 
-        // --- GAME OVER ---
-        socket.On("gameOver", (res) =>
-        {
-            EnqueueMainThread(() =>
-            {
-                string json = res.GetValue<string>();
-                var data = JsonUtility.FromJson<GameOverData>(json);
-
-                Debug.Log($"🏁 Game over: {data.reason} | Winner: {data.winner}");
-                OnGameOver?.Invoke(data.winner, data.reason);
-            });
-        });
+        socket.On("stateSync", res => EnqueueMainThread(() => {
+            var incoming = JsonUtility.FromJson<ServerState>(res.GetValue<string>());
+            if (incoming == null || incoming.roomId != currentRoomId) return;
+            if (latestState != null && incoming.matchId == latestState.matchId && incoming.revision < latestState.revision) return;
+            latestState = incoming; stateDirty = true; awaitingMove = false;
+        }));
+        socket.On("clockSync", res => EnqueueMainThread(() => {
+            var data = JsonUtility.FromJson<MoveData>(res.GetValue<string>());
+            if (isOnlineMode && ChessClock.Instance != null) ChessClock.Instance.SyncClockTimes(data.whiteTime, data.blackTime);
+        }));
+        socket.On("moveRejected", res => EnqueueMainThread(() => {
+            awaitingMove = false; Debug.LogWarning(res.GetValue<string>());
+        }));
+        socket.On("roomClosed", res => EnqueueMainThread(() => {
+            ApplyServerState(); ResetOnlineState(); OnReconnectFailed?.Invoke(res.GetValue<string>());
+        }));
 
         // --- OPPONENT DISCONNECTED ---
         socket.On("opponentDisconnected", (res) =>
@@ -376,6 +426,15 @@ public class SocketManager : MonoBehaviour
             });
         });
 
+        socket.OnError += (sender, error) => EnqueueMainThread(() => {
+            isConnected = false;
+            if (GameManager.Instance != null && isOnlineMode) GameManager.Instance.isPausedForReconnect = true;
+            OnJoinError?.Invoke(error);
+        });
+        socket.OnReconnectFailed += (sender, args) => EnqueueMainThread(() => {
+            if (GameManager.Instance != null && isOnlineMode) GameManager.Instance.isPausedForReconnect = true;
+            ResetOnlineState(); OnReconnectFailed?.Invoke("Connection lost. Please reconnect from the lobby.");
+        });
         // --- CONNECTION EVENTS ---
         socket.OnConnected += (sender, e) =>
         {
@@ -402,6 +461,7 @@ public class SocketManager : MonoBehaviour
             EnqueueMainThread(() =>
             {
                 isConnected = false;
+                if (GameManager.Instance != null && isOnlineMode) GameManager.Instance.isPausedForReconnect = true;
                 Debug.LogWarning($"❌ Disconnected from server. Reason: {e}");
                 OnDisconnected?.Invoke();
             });
@@ -421,6 +481,7 @@ public class SocketManager : MonoBehaviour
             {
                 string json = res.GetValue<string>();
                 Debug.Log($"🔄 Reconnect Success: {json}");
+                boardReadyForSync = false; awaitingMove = false;
                 OnReconnectSuccess?.Invoke(json);
             });
         });
@@ -431,7 +492,9 @@ public class SocketManager : MonoBehaviour
             {
                 string json = res.GetValue<string>();
                 Debug.LogWarning($"❌ Reconnect Failed: {json}");
-                OnReconnectFailed?.Invoke(json);
+                bool wasPlaying = isOnlineMode;
+                ResetOnlineState();
+                if (wasPlaying) OnReconnectFailed?.Invoke(json);
             });
         });
 
@@ -559,8 +622,11 @@ public class SocketManager : MonoBehaviour
             return;
         }
 
-        // move is already a JSON string created by GameManager
-        socket.Emit("move", move);
+        if (!CanSubmitMove) return;
+        var request = JsonUtility.FromJson<NetworkMoveData>(move);
+        request.matchId = latestState.matchId; request.revision = latestState.revision;
+        awaitingMove = true; moveSentAt = Time.realtimeSinceStartup;
+        socket.Emit("move", JsonUtility.ToJson(request));
         Debug.Log($"📤 Move sent: {move}");
     }
 
@@ -626,6 +692,7 @@ public class SocketManager : MonoBehaviour
     /// </summary>
     public void ResetOnlineState()
     {
+        latestState = null; stateDirty = false; boardReadyForSync = false; awaitingMove = false; endedMatch = null; pendingNetworkMoves.Clear();
         isOnlineMode = false;
         currentRoomId = null;
         opponentName = null;

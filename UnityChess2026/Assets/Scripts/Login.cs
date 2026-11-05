@@ -30,9 +30,12 @@ public class AccountManager
 
     public void Logout()
     {
+        OnlineSession.Token = null;
         CurrentAccount = null;
     }
 }
+
+public static class OnlineSession { public static string Token; }
 
 public class Login : MonoBehaviour
 {
@@ -295,6 +298,7 @@ public class Login : MonoBehaviour
     [Serializable]
     public class BackendResponse
     {
+        public string token;
         public string message;
         public string error;
         public UserData user;
@@ -419,6 +423,8 @@ public class Login : MonoBehaviour
                     res = JsonUtility.FromJson<BackendResponse>(request.downloadHandler.text);
                 } catch {}
 
+                if (res == null || res.user == null || string.IsNullOrEmpty(res.token)) { SetFeedback("Server response is incompatible. Please update the server.", false); yield break; }
+                OnlineSession.Token = res.token;
                 if (res != null && res.user != null)
                 {
                     AccountManager.Instance.CurrentAccount = new Account {

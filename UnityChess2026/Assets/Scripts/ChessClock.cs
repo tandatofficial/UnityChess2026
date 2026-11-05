@@ -271,6 +271,7 @@ public class ChessClock : MonoBehaviour
     private void Update()
     {
         bool isMatchActive = IsMatchActive();
+        if (GameManager.Instance != null && GameManager.Instance.currentGameMode == GameMode.Online) { isClockEnabled = true; clockMode = ClockMode.SuddenDeath; }
 
         if (isMatchActive && isClockEnabled)
         {
@@ -414,8 +415,8 @@ public class ChessClock : MonoBehaviour
 
     public void SyncClockTimes(float whiteTime, float blackTime)
     {
-        if (whiteTime > 0f) whiteTimeRemaining = whiteTime;
-        if (blackTime > 0f) blackTimeRemaining = blackTime;
+        if (whiteTime >= 0f) whiteTimeRemaining = whiteTime;
+        if (blackTime >= 0f) blackTimeRemaining = blackTime;
         UpdateClockUI();
     }
 
@@ -434,6 +435,7 @@ public class ChessClock : MonoBehaviour
 
     private void OnTurnChanged(PieceColor fromTurn, PieceColor toTurn)
     {
+        if (GameManager.Instance != null && GameManager.Instance.currentGameMode == GameMode.Online) return;
         // 1. Apply increment/bonus if Fischer Mode
         if (clockMode == ClockMode.FischerIncrement)
         {
@@ -470,6 +472,7 @@ public class ChessClock : MonoBehaviour
 
     private void FlagFall(PieceColor loser)
     {
+        if (GameManager.Instance != null && GameManager.Instance.currentGameMode == GameMode.Online) return;
         StopClock();
         PlayAlarmSound();
 

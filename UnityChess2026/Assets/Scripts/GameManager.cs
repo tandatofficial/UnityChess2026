@@ -64,6 +64,7 @@ public class GameManager : MonoBehaviour
     public void PrepareForOnlineGame()
     {
         isGameOver = false;
+        if (UIManager.Instance != null && UIManager.Instance.gameOverPanel != null) UIManager.Instance.gameOverPanel.SetActive(false);
         isPausedForReconnect = false;
         pendingNetworkMove = null;
         isMoving = false;
@@ -165,6 +166,7 @@ public class GameManager : MonoBehaviour
 
     public void TryMoveTo(int row, int col)
     {
+        if (currentGameMode == GameMode.Online && (SocketManager.Instance == null || !SocketManager.Instance.CanSubmitMove || isGameOver)) return;
         // Xóa dấu vết Gợi ý ngay khi người chơi vừa đi cờ
         if (HintManager.Instance != null) HintManager.Instance.ClearHint();
 
@@ -201,6 +203,17 @@ public class GameManager : MonoBehaviour
             return;
         }
 
+        if (currentGameMode == GameMode.Online)
+        {
+            if (selectedPiece.type == PieceType.Pawn && (row == 0 || row == 7) && PromotionManager.Instance != null)
+            {
+                pendingNetworkMove = $"{fromRow},{fromCol}->{row},{col}";
+                PromotionManager.Instance.StartPromotion(selectedPiece);
+            }
+            else SendNetworkMove($"{fromRow},{fromCol}->{row},{col}");
+            DeselectPiece();
+            return;
+        }
         isMoving = true;
 
         // Xử lý bắt quân nếu có
@@ -453,6 +466,7 @@ public class GameManager : MonoBehaviour
 
     public List<Vector2Int> GetValidMoves(ChessPiece piece)
     {
+        if (currentGameMode == GameMode.Online && SocketManager.Instance != null) return SocketManager.Instance.LegalTargets(piece.currentRow, piece.currentCol);
         List<Vector2Int> moves = new();
         var rule = MoveRuleFactory.GetRule(piece.type);
         if (rule == null) return moves;
@@ -561,6 +575,7 @@ public class GameManager : MonoBehaviour
     public void NotifyIfCheck()
     {
         PieceColor opponent = currentTurn == PieceColor.White ? PieceColor.Black : PieceColor.White;
+        if (currentGameMode == GameMode.Online) opponent = currentTurn;
         ChessPiece currentKing = FindKing(opponent, pieceBoard);
         if (currentKing == null) return;
 
@@ -786,6 +801,7 @@ public class GameManager : MonoBehaviour
     // --- HÀM UNDO: SỬA ĐỂ LÙI 2 BƯỚC LIÊN TIẾP ---
     public void UndoLastMove()
     {
+        if (currentGameMode == GameMode.Online) return;
         // CHỐT CHẶN 1: Nếu cờ đang bay thì không cho Undo để tránh loạn mảng
         if (isMoving) 
         {
@@ -979,6 +995,16 @@ public class GameManager : MonoBehaviour
         return JsonUtility.ToJson(new BoardStateData { pieces = pieceDataList, turn = nextTurn });
     }
 
+    public void ApplyOnlineState(string stateJson, bool paused)
+    {
+        StopAllCoroutines(); DeselectPiece();
+        isMoving = false; pendingNetworkMove = null; moveHistory.Clear();
+        if (PromotionManager.Instance != null) PromotionManager.Instance.CancelOnlinePromotion();
+        LoadBoardState(stateJson);
+        isPausedForReconnect = paused;
+        NotifyIfCheck();
+    }
+
     public void LoadBoardState(string stateJson)
     {
         if (string.IsNullOrEmpty(stateJson)) return;
@@ -1045,6 +1071,8 @@ public class GameManager : MonoBehaviour
 [System.Serializable]
 public class NetworkMoveData
 {
+    public string matchId;
+    public int revision;
     public string move;
     public string boardState;
     public float whiteTime;

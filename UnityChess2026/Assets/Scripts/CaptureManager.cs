@@ -21,6 +21,27 @@ public class CaptureManager : MonoBehaviour
         else Destroy(gameObject);
     }
 
+    public void SyncOnlineCaptured(PieceData[] pieces)
+    {
+        StopAllCoroutines();
+        foreach (var piece in whiteCapturedPieces) if (piece != null) Destroy(piece.gameObject);
+        foreach (var piece in blackCapturedPieces) if (piece != null) Destroy(piece.gameObject);
+        whiteCapturedPieces.Clear(); blackCapturedPieces.Clear();
+        if (pieces == null || PieceSpawner.Instance == null) return;
+        foreach (var data in pieces)
+        {
+            Transform area = data.color == PieceColor.White ? whiteCapturedArea : blackCapturedArea;
+            var list = data.color == PieceColor.White ? whiteCapturedPieces : blackCapturedPieces;
+            var prefab = PieceSpawner.Instance.GetPrefab(data.color, data.type);
+            if (area == null || prefab == null) continue;
+            int index = list.Count;
+            int offset = index % 2 == 0 ? -(index / 2) : (index + 1) / 2;
+            var piece = new ChessPieceBuilder().Create(prefab, area.position + new Vector3(0, 0, offset * capturedOffsetZ), prefab.transform.rotation, area)
+                .SetInfo(0, 0, data.color, data.type).Build();
+            piece.DisableComponent(); piece.SetColliderEnabled(false); list.Add(piece);
+        }
+    }
+
     public void CapturePiece(ChessPiece piece)
     {
         piece.gameObject.SetActive(true); // Đảm bảo quân cờ không bị disable
