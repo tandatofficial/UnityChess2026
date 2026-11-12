@@ -1,54 +1,43 @@
-using SocketIOClient;
-using SocketIOClient.Newtonsoft.Json;
+using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Net.WebSockets;
+using System.Text;
+using System.Threading;
+using System.Threading.Tasks;
 using TMPro;
 using UnityEngine;
-using UnityEngine.SceneManagement;
+using UnityEngine.Networking;
 using UnityEngine.UI;
-using static SocketIOUnity;
 
 public static class ServerConfig
 {
-    // ⚡ KHI DEPLOY LÊN RENDER: Đổi URL dưới đây thành địa chỉ Render của bạn
-    // Ví dụ: "https://chess-server-xxxx.onrender.com"
-    public const string DEFAULT_SERVER_URL = "https://unity-chess-server.onrender.com";
+    public const string DEFAULT_SERVER_URL = "https://unity-chess-server-dotnet.onrender.com";
 
     public static string GetBaseUrl(string inspectorOverride = null)
     {
         if (PlayerPrefs.HasKey("CustomServerUrl"))
         {
             string prefUrl = PlayerPrefs.GetString("CustomServerUrl", "").Trim();
-            if (!string.IsNullOrEmpty(prefUrl)) 
-                return NormalizeUrl(prefUrl);
+            if (!string.IsNullOrEmpty(prefUrl)) return NormalizeUrl(prefUrl);
         }
-
         if (!string.IsNullOrWhiteSpace(inspectorOverride))
         {
             string normalizedOverride = NormalizeUrl(inspectorOverride);
-            if (!normalizedOverride.Equals("http://localhost:11100", StringComparison.OrdinalIgnoreCase))
-            {
-                return normalizedOverride;
-            }
+            if (!normalizedOverride.Equals("http://localhost:11100", StringComparison.OrdinalIgnoreCase)) return normalizedOverride;
         }
-
         if (SocketManager.Instance != null && !string.IsNullOrWhiteSpace(SocketManager.Instance.serverUrl))
         {
-            string normalizedSm = NormalizeUrl(SocketManager.Instance.serverUrl);
-            if (!normalizedSm.Equals("http://localhost:11100", StringComparison.OrdinalIgnoreCase))
-            {
-                return normalizedSm;
-            }
+            string normalizedSocketUrl = NormalizeUrl(SocketManager.Instance.serverUrl);
+            if (!normalizedSocketUrl.Equals("http://localhost:11100", StringComparison.OrdinalIgnoreCase)) return normalizedSocketUrl;
         }
-
         return NormalizeUrl(DEFAULT_SERVER_URL);
     }
 
-    public static string NormalizeUrl(string url)
-    {
-        if (string.IsNullOrWhiteSpace(url)) return DEFAULT_SERVER_URL;
-        return url.Trim().TrimEnd('/');
-    }
+    public static string NormalizeUrl(string url) =>
+        string.IsNullOrWhiteSpace(url) ? DEFAULT_SERVER_URL : url.Trim().TrimEnd('/');
 }
 
 public class SocketManager : MonoBehaviour
@@ -58,23 +47,16 @@ public class SocketManager : MonoBehaviour
     {
         get
         {
-            if (_instance == null)
-            {
-                _instance = UnityEngine.Object.FindFirstObjectByType<SocketManager>();
-            }
+            if (_instance == null) _instance = UnityEngine.Object.FindFirstObjectByType<SocketManager>();
             return _instance;
         }
-        set
-        {
-            _instance = value;
-        }
+        set { _instance = value; }
     }
-    private SocketIOUnity socket;
 
     [Header("Network State")]
     public PieceColor assignedColor;
-    public bool isSpectator = false;
-    public bool isOnlineMode = false;
+    public bool isSpectator;
+    public bool isOnlineMode;
     public string currentRoomId;
     public string opponentName;
 
@@ -86,16 +68,12 @@ public class SocketManager : MonoBehaviour
     public TextMeshProUGUI playerNameText;
     public Button joinButton;
 
-    private string playerName;
-    private bool isConnected = false;
-
-    // --- Events for UI ---
-    public event Action<string> OnRoomCreated;          // roomId
-    public event Action<string, string> OnGameStarted;  // opponentName, assignedColor
-    public event Action<string> OnJoinError;            // errorMessage
-    public event Action<string> OnMoveReceived;        // move
-    public event Action<string, string> OnGameOver;     // winner, reason
-    public event Action<string> OnOpponentDisconnected; // message
+    public event Action<string> OnRoomCreated;
+    public event Action<string, string> OnGameStarted;
+    public event Action<string> OnJoinError;
+    public event Action<string> OnMoveReceived;
+    public event Action<string, string> OnGameOver;
+    public event Action<string> OnOpponentDisconnected;
     public event Action<string> OnOpponentReconnected;
     public event Action<string> OnReconnectSuccess;
     public event Action<string> OnReconnectFailed;
@@ -103,64 +81,76 @@ public class SocketManager : MonoBehaviour
     public event Action OnDisconnected;
     public event Action OnOpponentRequestedRematch;
     public event Action OnRematchAgreed;
-    public event Action<string> OnAvailableRoomsListReceived; // json string containing { rooms: [...] }
+    public event Action<string> OnAvailableRoomsListReceived;
 
-    private bool applicationQuitting = false;
+    private readonly ConcurrentQueue<Action> mainThreadActions = new ConcurrentQueue<Action>();
+    private readonly Queue<string> pendingNetworkMoves = new Queue<string>();
+    private ClientWebSocket socket;
+    private CancellationTokenSource socketCancellation;
+    private string playerName;
+    private bool isConnected;
+    private bool applicationQuitting;
+    private bool manualDisconnect;
+    private bool reconnectScheduled;
     private ServerState latestState;
     private bool boardReadyForSync;
     private bool stateDirty;
     private bool awaitingMove;
     private float moveSentAt;
     private string endedMatch;
-    public bool CanSubmitMove => IsConnected && boardReadyForSync && !awaitingMove && latestState != null && latestState.status == "playing";
-    public void MarkBoardReady() { boardReadyForSync = true; stateDirty = latestState != null; }
+
+    public string playerId { get; private set; }
+    public bool CanSubmitMove => IsConnected && boardReadyForSync && !awaitingMove &&
+                                 latestState != null && latestState.status == "playing";
+
+    public void MarkBoardReady()
+    {
+        boardReadyForSync = true;
+        stateDirty = latestState != null;
+    }
+
     public List<Vector2Int> LegalTargets(int row, int col)
     {
         var result = new List<Vector2Int>();
-        if (latestState?.legalMoves == null) return result;
+        if (latestState == null || latestState.legalMoves == null) return result;
         string prefix = row + "," + col + "->";
         foreach (string move in latestState.legalMoves)
-            if (move.StartsWith(prefix)) { string[] target = move.Substring(prefix.Length).Split(','); var p = new Vector2Int(int.Parse(target[0]), int.Parse(target[1])); if (!result.Contains(p)) result.Add(p); }
+        {
+            if (!move.StartsWith(prefix, StringComparison.Ordinal)) continue;
+            string[] target = move.Substring(prefix.Length).Split(',');
+            var point = new Vector2Int(int.Parse(target[0]), int.Parse(target[1]));
+            if (!result.Contains(point)) result.Add(point);
+        }
         return result;
     }
-    [Serializable] private class ServerState
+
+    [Serializable]
+    private class ServerState
     {
-        public string roomId, matchId, boardState, currentTurn, status, winner, reason;
+        public string roomId, matchId, boardState, currentTurn, status, winner, reason, color;
         public int revision;
         public float whiteTime, blackTime;
         public string[] legalMoves;
         public PieceData[] captured;
     }
-    private void ApplyServerState()
-    {
-        if (!stateDirty || !boardReadyForSync || !IsBoardReady() || latestState == null) return;
-        stateDirty = false;
-        var gm = GameManager.Instance;
-        gm.ApplyOnlineState(latestState.boardState, latestState.status != "playing");
-        if (CaptureManager.Instance != null) CaptureManager.Instance.SyncOnlineCaptured(latestState.captured);
-        if (ChessClock.Instance != null) ChessClock.Instance.SyncClockTimes(latestState.whiteTime, latestState.blackTime);
-        if (latestState.status == "finished" && endedMatch != latestState.matchId)
-        {
-            endedMatch = latestState.matchId;
-            gm.HandleNetworkGameOver(latestState.winner, latestState.reason);
-            OnGameOver?.Invoke(latestState.winner, latestState.reason);
-        }
-    }
-    public string playerId { get; private set; }
+
+    [Serializable] private class PieceData { public int r, c, type, color; public bool hasMoved; }
+    [Serializable] private class ErrorData { public string error; }
+    [Serializable] private class RoomCreatedData { public string roomId; }
+    [Serializable] private class GameStartData { public string roomId, color, opponentName; }
+    [Serializable] private class MoveData { public string move; public float whiteTime, blackTime; }
+    [Serializable] private class DisconnectData { public string message; }
+    [Serializable] private class NetworkMoveData { public string matchId, move; public int revision; }
 
     private void Awake()
     {
         if (_instance == null)
         {
             _instance = this;
-            transform.SetParent(null); // Ensure at root for DontDestroyOnLoad
+            transform.SetParent(null);
             DontDestroyOnLoad(gameObject);
         }
-        else if (_instance != this)
-        {
-            Destroy(gameObject);
-            return;
-        }
+        else if (_instance != this) Destroy(gameObject);
     }
 
     private void OnApplicationQuit()
@@ -171,544 +161,477 @@ public class SocketManager : MonoBehaviour
 
     private void OnDestroy()
     {
-        if (Instance == this)
-        {
-            Instance = null;
-        }
-        if (applicationQuitting)
-        {
-            Disconnect();
-        }
-    }
-
-    private readonly System.Collections.Concurrent.ConcurrentQueue<Action> mainThreadActions = new();
-    private readonly Queue<string> pendingNetworkMoves = new Queue<string>();
-
-    private bool IsBoardReady()
-    {
-        if (GameManager.Instance == null) return false;
-        if (GameManager.Instance.currentGameMode != GameMode.Online) return false;
-        if (GameManager.Instance.pieceBoard == null) return false;
-        
-        // Check if there is at least one piece instantiated to confirm initialization
-        foreach (var piece in GameManager.Instance.pieceBoard)
-        {
-            if (piece != null) return true;
-        }
-        return false;
+        if (Instance == this) Instance = null;
+        if (applicationQuitting) Disconnect();
     }
 
     private void Update()
     {
-        while (mainThreadActions.TryDequeue(out Action action))
+        while (mainThreadActions.TryDequeue(out Action action)) action?.Invoke();
+        ApplyServerState();
+
+        if (awaitingMove && IsConnected && Time.realtimeSinceStartup - moveSentAt > 5f)
         {
-            action?.Invoke();
+            moveSentAt = Time.realtimeSinceStartup;
+            RequestState();
         }
 
-        ApplyServerState();
-        if (awaitingMove && IsConnected && Time.realtimeSinceStartup - moveSentAt > 5f)
-        { moveSentAt = Time.realtimeSinceStartup; socket.Emit("requestState"); }
         if (pendingNetworkMoves.Count > 0 && IsBoardReady())
         {
             string move = pendingNetworkMoves.Dequeue();
-            try
-            {
-                Debug.Log($"[SocketManager] Dequeued move: {move}. Applying...");
-                GameManager.Instance.ApplyMoveFromNetwork(move);
-            }
-            catch (Exception ex)
-            {
-                Debug.LogError($"[SocketManager] Exception applying dequeued move: {ex}");
-            }
+            try { GameManager.Instance.ApplyMoveFromNetwork(move); }
+            catch (Exception ex) { Debug.LogError($"[SignalR] Could not apply remote move: {ex}"); }
         }
     }
 
-    private void EnqueueMainThread(Action action)
+    private void EnqueueMainThread(Action action) => mainThreadActions.Enqueue(action);
+
+    private bool IsBoardReady()
     {
-        mainThreadActions.Enqueue(action);
+        if (GameManager.Instance == null || GameManager.Instance.currentGameMode != GameMode.Online ||
+            GameManager.Instance.pieceBoard == null) return false;
+        foreach (var piece in GameManager.Instance.pieceBoard) if (piece != null) return true;
+        return false;
     }
 
-    /// <summary>
-    /// Connect to the server with the given player name.
-    /// Must be called before CreateRoom/JoinRoom.
-    /// </summary>
+    private void ApplyServerState()
+    {
+        if (!stateDirty || !boardReadyForSync || !IsBoardReady() || latestState == null) return;
+        stateDirty = false;
+        var manager = GameManager.Instance;
+        manager.ApplyOnlineState(latestState.boardState, latestState.status != "playing");
+        if (CaptureManager.Instance != null) CaptureManager.Instance.SyncOnlineCaptured(latestState.captured);
+        if (ChessClock.Instance != null) ChessClock.Instance.SyncClockTimes(latestState.whiteTime, latestState.blackTime);
+        if (latestState.status == "finished" && endedMatch != latestState.matchId)
+        {
+            endedMatch = latestState.matchId;
+            manager.HandleNetworkGameOver(latestState.winner, latestState.reason);
+            OnGameOver?.Invoke(latestState.winner, latestState.reason);
+        }
+    }
+
     public void ConnectToServer(string name)
     {
-        if (isConnected && socket != null && socket.Connected)
+        if (IsConnected) return;
+        playerName = string.IsNullOrWhiteSpace(name) ? "Player" : name;
+        if (string.IsNullOrEmpty(OnlineSession.Token))
         {
-            Debug.Log("🔗 Already connected to server.");
+            OnJoinError?.Invoke("Please log in again to play online.");
             return;
         }
-
-        // Clean up old socket if exists
-        if (socket != null)
+        manualDisconnect = false;
+        if (!PlayerPrefs.HasKey("playerIdBase"))
         {
-            try { socket.Dispose(); } catch { }
-            socket = null;
+            PlayerPrefs.SetString("playerIdBase", Guid.NewGuid().ToString());
+            PlayerPrefs.Save();
         }
-
-        if (string.IsNullOrEmpty(OnlineSession.Token))
-        { Debug.LogError("Please log in before playing online."); OnJoinError?.Invoke("Please log in again to play online."); return; }
-        playerName = name;
-
-        if (string.IsNullOrWhiteSpace(playerName))
-        {
-            playerName = "Player_" + UnityEngine.Random.Range(1000, 9999);
-        }
-
-        if (string.IsNullOrEmpty(playerId))
-        {
-            if (!PlayerPrefs.HasKey("playerIdBase"))
-            {
-                PlayerPrefs.SetString("playerIdBase", System.Guid.NewGuid().ToString());
-                PlayerPrefs.Save();
-            }
-            string sessionId = System.Guid.NewGuid().ToString().Substring(0, 8);
-            playerId = PlayerPrefs.GetString("playerIdBase") + "_" + Application.dataPath.GetHashCode() + "_" + sessionId;
-        }
-
-        string resolvedUrl = ServerConfig.GetBaseUrl(serverUrl);
-        serverUrl = resolvedUrl;
-        var uri = new Uri(resolvedUrl);
-        socket = new SocketIOUnity(uri, new SocketIOOptions
-        {
-            Query = new Dictionary<string, string> {
-                { "token", OnlineSession.Token },
-                { "name", playerName },
-                { "playerId", playerId }
-            },
-            Transport = SocketIOClient.Transport.TransportProtocol.WebSocket,
-            Reconnection = true,
-            ReconnectionAttempts = 30,
-            ReconnectionDelay = 1000,
-        });
-
-        socket.JsonSerializer = new NewtonsoftJsonSerializer();
-        // Do NOT use UnityThreadScope.Update because it creates a hidden GameObject that dies on scene load
-        // socket.unityThreadScope = UnityThreadScope.Update;
-
-        RegisterSocketEvents();
-
-        Debug.Log($"🔗 Connecting to server ({resolvedUrl}) as '{playerName}'...");
-        socket.Connect();
+        playerId = PlayerPrefs.GetString("playerIdBase");
+        StartCoroutine(ConnectCoroutine());
     }
 
-    private void RegisterSocketEvents()
+    private System.Collections.IEnumerator ConnectCoroutine()
     {
-        // --- ROOM CREATED ---
-        socket.On("roomCreated", (res) =>
+        CloseSocket();
+        serverUrl = ServerConfig.GetBaseUrl(serverUrl);
+        socketCancellation = new CancellationTokenSource();
+        socket = new ClientWebSocket();
+        var baseUri = new Uri(serverUrl);
+        var builder = new UriBuilder(baseUri)
+        {
+            Scheme = baseUri.Scheme == "https" ? "wss" : "ws",
+            Path = baseUri.AbsolutePath.TrimEnd('/') + "/hubs/game",
+            Query = "access_token=" + Uri.EscapeDataString(OnlineSession.Token)
+        };
+        Task connect = socket.ConnectAsync(builder.Uri, socketCancellation.Token);
+        while (!connect.IsCompleted) yield return null;
+        if (connect.IsFaulted)
+        {
+            HandleConnectionError(connect.Exception?.GetBaseException().Message ?? "Could not connect to server.");
+            yield break;
+        }
+
+        string handshake = JsonConvert.SerializeObject(new { protocol = "json", version = 1 }) + "\u001e";
+        Task send = socket.SendAsync(new ArraySegment<byte>(Encoding.UTF8.GetBytes(handshake)),
+            WebSocketMessageType.Text, true, socketCancellation.Token);
+        while (!send.IsCompleted) yield return null;
+        if (send.IsFaulted)
+        {
+            HandleConnectionError(send.Exception?.GetBaseException().Message ?? "SignalR handshake failed.");
+            yield break;
+        }
+
+        _ = ReceiveLoopAsync(socket, socketCancellation.Token);
+    }
+
+    private async Task ReceiveLoopAsync(ClientWebSocket connection, CancellationToken cancellationToken)
+    {
+        var buffer = new byte[8192];
+        var receiveBuffer = new StringBuilder();
+        var handshakeReceived = false;
+        try
+        {
+            while (connection.State == WebSocketState.Open && !cancellationToken.IsCancellationRequested)
+            {
+                var result = await connection.ReceiveAsync(new ArraySegment<byte>(buffer), cancellationToken);
+                if (result.MessageType == WebSocketMessageType.Close) break;
+                receiveBuffer.Append(Encoding.UTF8.GetString(buffer, 0, result.Count));
+                var text = receiveBuffer.ToString();
+                var start = 0;
+                for (int i = 0; i < text.Length; i++)
+                {
+                    if (text[i] != '\u001e') continue;
+                    string record = text.Substring(start, i - start);
+                    start = i + 1;
+                    if (!handshakeReceived)
+                    {
+                        handshakeReceived = true;
+                        if (!string.IsNullOrWhiteSpace(record) && record != "{}")
+                            throw new InvalidOperationException(record);
+                        EnqueueMainThread(() =>
+                        {
+                            isConnected = true;
+                            reconnectScheduled = false;
+                            OnConnected?.Invoke();
+                        });
+                    }
+                    else if (!string.IsNullOrWhiteSpace(record))
+                        await ProcessHubRecordAsync(connection, record, cancellationToken);
+                }
+                receiveBuffer.Clear();
+                if (start < text.Length) receiveBuffer.Append(text.Substring(start));
+            }
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception ex)
+        {
+            EnqueueMainThread(() => HandleConnectionError(ex.GetBaseException().Message));
+        }
+        finally
         {
             EnqueueMainThread(() =>
             {
-                string json = res.GetValue<string>();
-                var data = JsonUtility.FromJson<RoomCreatedData>(json);
-                currentRoomId = data.roomId;
+                if (isConnected)
+                {
+                    isConnected = false;
+                    if (GameManager.Instance != null && isOnlineMode) GameManager.Instance.isPausedForReconnect = true;
+                    OnDisconnected?.Invoke();
+                }
+                if (!manualDisconnect && !applicationQuitting && !reconnectScheduled)
+                {
+                    reconnectScheduled = true;
+                    StartCoroutine(ReconnectCoroutine());
+                }
+            });
+        }
+    }
 
-                Debug.Log($"🏠 Room created: {currentRoomId}");
+    private System.Collections.IEnumerator ReconnectCoroutine()
+    {
+        for (int attempt = 0; attempt < 30 && !manualDisconnect && !applicationQuitting; attempt++)
+        {
+            yield return new WaitForSecondsRealtime(1f);
+            if (IsConnected) yield break;
+            StartCoroutine(ConnectCoroutine());
+            float timeout = 5f;
+            while (timeout > 0f && !IsConnected)
+            {
+                timeout -= Time.unscaledDeltaTime;
+                yield return null;
+            }
+            if (IsConnected) yield break;
+        }
+        reconnectScheduled = false;
+        if (isOnlineMode)
+        {
+            ResetOnlineState();
+            OnReconnectFailed?.Invoke("Connection lost. Please reconnect from the lobby.");
+        }
+    }
+
+    private async Task ProcessHubRecordAsync(ClientWebSocket connection, string record, CancellationToken cancellationToken)
+    {
+        var message = JObject.Parse(record);
+        int type = message.Value<int?>("type") ?? 0;
+        if (type == 6)
+        {
+            await SendHubMessageAsync(connection, new { type = 6 }, cancellationToken);
+            return;
+        }
+        if (type == 7) throw new InvalidOperationException(message.Value<string>("error") ?? "SignalR connection closed.");
+        if (type != 1) return;
+        string target = message.Value<string>("target");
+        var args = message["arguments"] as JArray;
+        if (string.IsNullOrEmpty(target) || args == null || args.Count == 0) return;
+        string payload = args[0].ToString(Formatting.None);
+        EnqueueMainThread(() => HandleHubEvent(target, payload));
+    }
+
+    private void HandleHubEvent(string target, string payload)
+    {
+        switch (target)
+        {
+            case "roomCreated":
+                currentRoomId = JsonUtility.FromJson<RoomCreatedData>(payload)?.roomId;
                 OnRoomCreated?.Invoke(currentRoomId);
-            });
-        });
-
-        // --- JOIN ERROR ---
-        socket.On("joinError", (res) =>
-        {
-            EnqueueMainThread(() =>
-            {
-                string json = res.GetValue<string>();
-                var data = JsonUtility.FromJson<ErrorData>(json);
-
-                Debug.LogWarning($"❌ Join error: {data.error}");
-                OnJoinError?.Invoke(data.error);
-            });
-        });
-
-        // --- GAME START ---
-        socket.On("gameStart", (res) =>
-        {
-            EnqueueMainThread(() =>
-            {
-                string json = res.GetValue<string>();
-                var data = JsonUtility.FromJson<GameStartData>(json);
-
-                boardReadyForSync = false; latestState = null; awaitingMove = false; endedMatch = null; pendingNetworkMoves.Clear();
-                currentRoomId = data.roomId;
-                opponentName = data.opponentName;
-                assignedColor = (data.color == "white") ? PieceColor.White : PieceColor.Black;
+                break;
+            case "gameStart":
+                var start = JsonUtility.FromJson<GameStartData>(payload);
+                if (start == null) break;
+                boardReadyForSync = false;
+                latestState = null;
+                awaitingMove = false;
+                endedMatch = null;
+                pendingNetworkMoves.Clear();
+                currentRoomId = start.roomId;
+                opponentName = start.opponentName;
+                assignedColor = start.color == "white" ? PieceColor.White : PieceColor.Black;
                 isOnlineMode = true;
                 isSpectator = false;
-
-                Debug.Log($"🎮 Game started! Room: {currentRoomId}, Color: {data.color}, Opponent: {opponentName}");
-                OnGameStarted?.Invoke(data.opponentName, data.color);
-            });
-        });
-
-        // --- MOVE RECEIVED ---
-        socket.On("move", (res) =>
-        {
-            EnqueueMainThread(() =>
-            {
-                try 
+                OnGameStarted?.Invoke(start.opponentName, start.color);
+                break;
+            case "stateSync":
+                ApplyStatePayload(payload);
+                break;
+            case "reconnectSuccess":
+                var reconnect = JsonUtility.FromJson<ServerState>(payload);
+                if (reconnect != null)
                 {
-                    string json = "";
-                    try {
-                        json = res.GetValue<string>();
-                    } catch {
-                        json = res.GetValue<object>().ToString();
-                    }
-                    Debug.Log($"[SocketManager] Raw move received: {json}");
-                    
-                    var data = JsonUtility.FromJson<MoveData>(json);
-
-                    if (data == null || string.IsNullOrEmpty(data.move))
-                    {
-                        // Fallback: maybe the server sent {"move":"1,5->3,5"} directly as an object, and ToString() gave JSON
-                        // Or maybe it's just the string itself "1,5->3,5"
-                        if (json.Contains("->") && !json.Contains("{")) {
-                            data = new MoveData { move = json };
-                        } else {
-                            Debug.LogError($"[SocketManager] Could not parse move from json: {json}");
-                            return;
-                        }
-                    }
-
-                    Debug.Log($"♟️ Move received from opponent: {data.move}");
-                    if (ChessClock.Instance != null && (data.whiteTime > 0f || data.blackTime > 0f))
-                    {
-                        ChessClock.Instance.SyncClockTimes(data.whiteTime, data.blackTime);
-                    }
-                    OnMoveReceived?.Invoke(data.move);
-
-                    if (IsBoardReady())
-                    {
-                        Debug.Log("[SocketManager] Board is ready, applying move directly.");
-                        GameManager.Instance.ApplyMoveFromNetwork(data.move);
-                    }
-                    else
-                    {
-                        Debug.Log("[SocketManager] Board not ready, enqueuing move.");
-                        pendingNetworkMoves.Enqueue(data.move);
-                    }
+                    currentRoomId = reconnect.roomId;
+                    assignedColor = reconnect.color == "white" ? PieceColor.White : PieceColor.Black;
+                    isOnlineMode = true;
+                    latestState = reconnect;
+                    stateDirty = true;
+                    awaitingMove = false;
+                    OnReconnectSuccess?.Invoke(payload);
                 }
-                catch (Exception ex)
-                {
-                    Debug.LogError($"[SocketManager] Error processing move event: {ex}");
-                }
-            });
-        });
-
-        socket.On("stateSync", res => EnqueueMainThread(() => {
-            var incoming = JsonUtility.FromJson<ServerState>(res.GetValue<string>());
-            if (incoming == null || incoming.roomId != currentRoomId) return;
-            if (latestState != null && incoming.matchId == latestState.matchId && incoming.revision < latestState.revision) return;
-            latestState = incoming; stateDirty = true; awaitingMove = false;
-        }));
-        socket.On("clockSync", res => EnqueueMainThread(() => {
-            var data = JsonUtility.FromJson<MoveData>(res.GetValue<string>());
-            if (isOnlineMode && ChessClock.Instance != null) ChessClock.Instance.SyncClockTimes(data.whiteTime, data.blackTime);
-        }));
-        socket.On("moveRejected", res => EnqueueMainThread(() => {
-            awaitingMove = false; Debug.LogWarning(res.GetValue<string>());
-        }));
-        socket.On("roomClosed", res => EnqueueMainThread(() => {
-            ApplyServerState(); ResetOnlineState(); OnReconnectFailed?.Invoke(res.GetValue<string>());
-        }));
-
-        // --- OPPONENT DISCONNECTED ---
-        socket.On("opponentDisconnected", (res) =>
-        {
-            EnqueueMainThread(() =>
-            {
-                string json = res.GetValue<string>();
-                var data = JsonUtility.FromJson<DisconnectData>(json);
-
-                Debug.LogWarning($"⚠️ {data.message}");
-                OnOpponentDisconnected?.Invoke(data.message);
-            });
-        });
-
-        socket.OnError += (sender, error) => EnqueueMainThread(() => {
-            isConnected = false;
-            if (GameManager.Instance != null && isOnlineMode) GameManager.Instance.isPausedForReconnect = true;
-            OnJoinError?.Invoke(error);
-        });
-        socket.OnReconnectFailed += (sender, args) => EnqueueMainThread(() => {
-            if (GameManager.Instance != null && isOnlineMode) GameManager.Instance.isPausedForReconnect = true;
-            ResetOnlineState(); OnReconnectFailed?.Invoke("Connection lost. Please reconnect from the lobby.");
-        });
-        // --- CONNECTION EVENTS ---
-        socket.OnConnected += (sender, e) =>
-        {
-            isConnected = true;
-            Debug.Log("✅ Connected to server.");
-            EnqueueMainThread(() => { OnConnected?.Invoke(); });
-        };
-
-        socket.On("connect_error", (res) =>
-        {
-            EnqueueMainThread(() =>
-            {
-                isConnected = false;
-                string msg = $"Could not connect to server ({serverUrl}).";
-                try { msg = res.GetValue<string>(); } catch { }
-                Debug.LogError($"❌ Connection error: {msg}");
-                OnDisconnected?.Invoke();
-            });
-        });
-
-        // --- DISCONNECT / RECONNECT ---
-        socket.OnDisconnected += (sender, e) =>
-        {
-            EnqueueMainThread(() =>
-            {
-                isConnected = false;
-                if (GameManager.Instance != null && isOnlineMode) GameManager.Instance.isPausedForReconnect = true;
-                Debug.LogWarning($"❌ Disconnected from server. Reason: {e}");
-                OnDisconnected?.Invoke();
-            });
-        };
-
-        socket.OnReconnected += (sender, e) =>
-        {
-            EnqueueMainThread(() =>
-            {
-                Debug.Log($"🔄 Socket.IO Reconnected (attempt {e}). Waiting for server sync...");
-            });
-        };
-
-        socket.On("reconnectSuccess", (res) =>
-        {
-            EnqueueMainThread(() =>
-            {
-                string json = res.GetValue<string>();
-                Debug.Log($"🔄 Reconnect Success: {json}");
-                boardReadyForSync = false; awaitingMove = false;
-                OnReconnectSuccess?.Invoke(json);
-            });
-        });
-
-        socket.On("reconnectFailed", (res) =>
-        {
-            EnqueueMainThread(() =>
-            {
-                string json = res.GetValue<string>();
-                Debug.LogWarning($"❌ Reconnect Failed: {json}");
+                break;
+            case "reconnectFailed":
                 bool wasPlaying = isOnlineMode;
                 ResetOnlineState();
-                if (wasPlaying) OnReconnectFailed?.Invoke(json);
-            });
-        });
-
-        socket.On("opponentReconnected", (res) =>
-        {
-            EnqueueMainThread(() =>
-            {
-                string json = res.GetValue<string>();
-                Debug.Log($"🔄 Opponent Reconnected: {json}");
-                OnOpponentReconnected?.Invoke(json);
-            });
-        });
-
-        // --- OPPONENT REQUESTED REMATCH ---
-        socket.On("opponentRequestedRematch", (res) =>
-        {
-            EnqueueMainThread(() =>
-            {
-                Debug.Log("🔄 Opponent requested a rematch!");
+                if (wasPlaying) OnReconnectFailed?.Invoke(payload);
+                break;
+            case "superseded":
+                manualDisconnect = true;
+                CloseSocket();
+                isConnected = false;
+                OnDisconnected?.Invoke();
+                break;
+            case "clockSync":
+                var clock = JsonUtility.FromJson<MoveData>(payload);
+                if (isOnlineMode && clock != null && ChessClock.Instance != null)
+                    ChessClock.Instance.SyncClockTimes(clock.whiteTime, clock.blackTime);
+                break;
+            case "moveRejected":
+            case "joinError":
+                awaitingMove = false;
+                OnJoinError?.Invoke(ReadError(payload));
+                break;
+            case "roomClosed":
+                ApplyServerState();
+                ResetOnlineState();
+                OnReconnectFailed?.Invoke(ReadError(payload));
+                break;
+            case "opponentDisconnected":
+                OnOpponentDisconnected?.Invoke(JsonUtility.FromJson<DisconnectData>(payload)?.message);
+                break;
+            case "opponentReconnected":
+                OnOpponentReconnected?.Invoke(payload);
+                break;
+            case "opponentRequestedRematch":
                 OnOpponentRequestedRematch?.Invoke();
-            });
-        });
-
-        // --- REMATCH AGREED ---
-        socket.On("rematchAgreed", (res) =>
-        {
-            EnqueueMainThread(() =>
-            {
-                Debug.Log("🤝 Rematch agreed by both players!");
+                break;
+            case "rematchAgreed":
                 OnRematchAgreed?.Invoke();
-            });
-        });
-
-        // --- AVAILABLE ROOMS LIST ---
-        socket.On("availableRoomsList", (res) =>
-        {
-            EnqueueMainThread(() =>
-            {
-                string json = res.GetValue<string>();
-                Debug.Log($"🏠 Available rooms list: {json}");
-                OnAvailableRoomsListReceived?.Invoke(json);
-            });
-        });
+                break;
+            case "availableRoomsList":
+                OnAvailableRoomsListReceived?.Invoke(payload);
+                break;
+        }
     }
 
-    // ------------------------------------------------
-    // Public API
-    // ------------------------------------------------
+    private void ApplyStatePayload(string payload)
+    {
+        var incoming = JsonUtility.FromJson<ServerState>(payload);
+        if (incoming == null || (currentRoomId != null && incoming.roomId != currentRoomId)) return;
+        currentRoomId = incoming.roomId;
+        if (latestState != null && incoming.matchId == latestState.matchId && incoming.revision < latestState.revision) return;
+        latestState = incoming;
+        stateDirty = true;
+        awaitingMove = false;
+    }
 
-    /// <summary>
-    /// Request the list of waiting rooms from the server.
-    /// </summary>
+    private async Task SendHubMessageAsync(ClientWebSocket connection, object message, CancellationToken token)
+    {
+        if (connection == null || connection.State != WebSocketState.Open) return;
+        string payload = JsonConvert.SerializeObject(message) + "\u001e";
+        await connection.SendAsync(new ArraySegment<byte>(Encoding.UTF8.GetBytes(payload)), WebSocketMessageType.Text, true, token);
+    }
+
+    private void HandleConnectionError(string error)
+    {
+        isConnected = false;
+        if (GameManager.Instance != null && isOnlineMode) GameManager.Instance.isPausedForReconnect = true;
+        OnJoinError?.Invoke(error);
+        OnDisconnected?.Invoke();
+        if (!manualDisconnect && !applicationQuitting && !reconnectScheduled)
+        {
+            reconnectScheduled = true;
+            StartCoroutine(ReconnectCoroutine());
+        }
+    }
+
+    private static string ReadError(string payload)
+    {
+        try
+        {
+            var value = JsonUtility.FromJson<ErrorData>(payload);
+            if (!string.IsNullOrEmpty(value?.error)) return value.error;
+        }
+        catch { }
+        try
+        {
+            var value = JObject.Parse(payload);
+            return value.Value<string>("error") ?? value.Value<string>("reason") ?? payload;
+        }
+        catch { return payload; }
+    }
+
     public void GetAvailableRooms()
     {
-        if (socket == null || !socket.Connected) return;
-        socket.Emit("getAvailableRooms");
-        Debug.Log("📤 Requesting available rooms list...");
+        if (IsConnected)
+            StartCoroutine(SendRest("GET", "/api/rooms", null, response => OnAvailableRoomsListReceived?.Invoke(response)));
     }
 
-    /// <summary>
-    /// Request the server to create a new room.
-    /// The result will come back via OnRoomCreated event.
-    /// </summary>
     public void CreateRoom(bool isPrivate = false)
     {
-        if (socket == null || !socket.Connected)
-        {
-            Debug.LogWarning("⚠️ Not connected to server!");
-            return;
-        }
-
-        string json = "{\"isPrivate\":" + (isPrivate ? "true" : "false") + "}";
-        socket.Emit("createRoom", json);
-        Debug.Log($"📤 Requesting room creation (private: {isPrivate})...");
+        if (!IsConnected) { OnJoinError?.Invoke("Not connected to server."); return; }
+        StartCoroutine(SendRest("POST", "/api/rooms", JsonConvert.SerializeObject(new { isPrivate }), null));
     }
 
-    /// <summary>
-    /// Join an existing room by ID.
-    /// The result will come back via OnGameStarted or OnJoinError event.
-    /// </summary>
     public void JoinRoom(string roomId)
     {
-        if (socket == null || !socket.Connected)
-        {
-            Debug.LogWarning("⚠️ Not connected to server!");
-            return;
-        }
-
-        string json = JsonUtility.ToJson(new JoinRoomData { roomId = roomId.ToUpper().Trim() });
-        socket.Emit("joinRoom", json);
-        Debug.Log($"📤 Requesting to join room: {roomId}");
+        if (!IsConnected) { OnJoinError?.Invoke("Not connected to server."); return; }
+        StartCoroutine(SendRest("POST", "/api/rooms/" + Uri.EscapeDataString(roomId.Trim().ToUpperInvariant()) + "/join", "{}", null));
     }
 
-    /// <summary>
-    /// Request a rematch from the opponent.
-    /// </summary>
     public void RequestRematch()
     {
-        if (socket == null || !socket.Connected) return;
-        socket.Emit("requestRematch");
-        Debug.Log("📤 Emitted requestRematch");
+        if (IsConnected && !string.IsNullOrEmpty(currentRoomId))
+            StartCoroutine(SendRest("POST", RoomPath("rematch"), "{}", null));
     }
 
-    /// <summary>
-    /// Notify the server that the player is ready for the rematch.
-    /// </summary>
     public void SendPlayerReadyForRematch()
     {
-        if (socket == null || !socket.Connected) return;
-        socket.Emit("playerReadyForRematch");
-        Debug.Log("📤 Emitted playerReadyForRematch");
+        if (IsConnected && !string.IsNullOrEmpty(currentRoomId))
+            StartCoroutine(SendRest("POST", RoomPath("ready"), "{}", null));
     }
 
-    /// <summary>
-    /// Send a chess move to the server.
-    /// Format: "fromRow,fromCol->toRow,toCol"
-    /// </summary>
     public void SendMove(string move)
     {
-        if (!isOnlineMode) return;
-
-        if (socket == null || !socket.Connected)
+        if (!isOnlineMode || !IsConnected || !CanSubmitMove) return;
+        var request = new NetworkMoveData
         {
-            Debug.LogWarning("⚠️ Cannot send move: not connected.");
-            return;
-        }
-
-        if (!CanSubmitMove) return;
-        var request = JsonUtility.FromJson<NetworkMoveData>(move);
-        request.matchId = latestState.matchId; request.revision = latestState.revision;
-        awaitingMove = true; moveSentAt = Time.realtimeSinceStartup;
-        socket.Emit("move", JsonUtility.ToJson(request));
-        Debug.Log($"📤 Move sent: {move}");
+            move = move,
+            matchId = latestState.matchId,
+            revision = latestState.revision
+        };
+        awaitingMove = true;
+        moveSentAt = Time.realtimeSinceStartup;
+        StartCoroutine(SendRest("POST", RoomPath("moves"), JsonConvert.SerializeObject(request),
+            response => ApplyStatePayload(response)));
     }
 
-    /// <summary>
-    /// Notify the server that the game has ended (checkmate, stalemate, etc.)
-    /// </summary>
-    public void SendGameOver(string winner, string reason)
-    {
-        if (!isOnlineMode) return;
+    public void SendGameOver(string winner, string reason) { }
 
-        if (socket == null || !socket.Connected) return;
-
-        string json = JsonUtility.ToJson(new GameOverData { winner = winner, reason = reason });
-        socket.Emit("gameOver", json);
-        Debug.Log($"📤 Game over sent: {reason}");
-    }
-
-    /// <summary>
-    /// Resign from the current game.
-    /// </summary>
     public void Resign()
     {
-        if (!isOnlineMode) return;
-
-        if (socket == null || !socket.Connected) return;
-
-        socket.Emit("resign", "{}");
-        Debug.Log("🏳️ Resign sent.");
+        if (isOnlineMode && IsConnected && !string.IsNullOrEmpty(currentRoomId))
+            StartCoroutine(SendRest("POST", RoomPath("resign"), "{}", response => ApplyStatePayload(response)));
     }
 
-    /// <summary>
-    /// Leave the current room without disconnecting from the server.
-    /// Useful when canceling matchmaking.
-    /// </summary>
     public void LeaveRoom()
     {
-        if (socket == null || !socket.Connected) return;
-
-        socket.Emit("leaveRoom", "{}");
-        Debug.Log("🚪 Leaving room...");
+        if (IsConnected && !string.IsNullOrEmpty(currentRoomId))
+            StartCoroutine(SendRest("POST", RoomPath("leave"), "{}", null));
         ResetOnlineState();
     }
 
-    /// <summary>
-    /// Disconnect from the server cleanly.
-    /// </summary>
+    private void RequestState()
+    {
+        if (IsConnected && !string.IsNullOrEmpty(currentRoomId))
+            StartCoroutine(SendRest("GET", "/api/rooms/" + Uri.EscapeDataString(currentRoomId),
+                null, response => ApplyStatePayload(response)));
+    }
+
+    private string RoomPath(string action) =>
+        "/api/rooms/" + Uri.EscapeDataString(currentRoomId) + "/" + action;
+
+    private System.Collections.IEnumerator SendRest(string method, string path, string body, Action<string> success)
+    {
+        var request = new UnityWebRequest(ServerConfig.GetBaseUrl(serverUrl) + path, method)
+        {
+            downloadHandler = new DownloadHandlerBuffer()
+        };
+        if (body != null) request.uploadHandler = new UploadHandlerRaw(Encoding.UTF8.GetBytes(body));
+        request.SetRequestHeader("Authorization", "Bearer " + OnlineSession.Token);
+        if (body != null) request.SetRequestHeader("Content-Type", "application/json");
+        yield return request.SendWebRequest();
+        if (request.result == UnityWebRequest.Result.Success)
+            success?.Invoke(request.downloadHandler.text);
+        else
+        {
+            string message = ReadError(request.downloadHandler?.text ?? request.error);
+            awaitingMove = false;
+            OnJoinError?.Invoke(message);
+            if (method == "POST" && path.EndsWith("/moves", StringComparison.Ordinal)) RequestState();
+        }
+        request.Dispose();
+    }
+
     public void Disconnect()
     {
-        if (socket != null)
-        {
-            if (socket.Connected) socket.Disconnect();
-            try { socket.Dispose(); } catch { }
-            socket = null;
-        }
+        manualDisconnect = true;
+        CloseSocket();
         isConnected = false;
         isOnlineMode = false;
         currentRoomId = null;
         opponentName = null;
     }
 
-    /// <summary>
-    /// Reset online state (when returning to menu).
-    /// </summary>
+    private void CloseSocket()
+    {
+        if (socketCancellation != null)
+        {
+            socketCancellation.Cancel();
+            socketCancellation.Dispose();
+            socketCancellation = null;
+        }
+        if (socket != null)
+        {
+            try
+            {
+                if (socket.State == WebSocketState.Open)
+                    _ = socket.CloseAsync(WebSocketCloseStatus.NormalClosure, "Client closed", CancellationToken.None);
+                socket.Dispose();
+            }
+            catch { }
+            socket = null;
+        }
+    }
+
     public void ResetOnlineState()
     {
-        latestState = null; stateDirty = false; boardReadyForSync = false; awaitingMove = false; endedMatch = null; pendingNetworkMoves.Clear();
+        latestState = null;
+        stateDirty = false;
+        boardReadyForSync = false;
+        awaitingMove = false;
+        endedMatch = null;
+        pendingNetworkMoves.Clear();
         isOnlineMode = false;
         currentRoomId = null;
         opponentName = null;
         isSpectator = false;
     }
 
-    public bool IsConnected => isConnected && socket != null && socket.Connected;
-
-    // ------------------------------------------------
-    // JSON Data Classes
-    // ------------------------------------------------
-    [Serializable] private class RoomCreatedData { public string roomId; }
-    [Serializable] private class JoinRoomData { public string roomId; }
-    [Serializable] private class ErrorData { public string error; }
-    [Serializable] private class GameStartData { public string roomId; public string color; public string opponentName; }
-    [Serializable] private class MoveData { public string move; public float whiteTime; public float blackTime; }
-    [Serializable] private class GameOverData { public string winner; public string reason; }
-    [Serializable] private class DisconnectData { public string message; }
+    public bool IsConnected => isConnected && socket != null && socket.State == WebSocketState.Open;
 }

@@ -26,3 +26,29 @@ services:
         sync: false
       - key: MAILTRAP_PASS
         sync: false
+  - type: web
+    name: unity-chess-server-dotnet
+    runtime: docker
+    dockerContext: .
+    dockerfilePath: chess-server-dotnet/Dockerfile
+    plan: free
+    healthCheckPath: /health
+    envVars:
+      - key: SESSION_SECRET
+        generateValue: true
+      - key: MATCH_STATE_FILE
+        value: ./data/matches.json
+      - key: MATCH_SECONDS
+        value: 600
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_KEY
+        sync: false
+      - key: EMAIL_USER
+        sync: false
+      - key: EMAIL_PASS
+        sync: false
+      - key: MAILTRAP_USER
+        sync: false
+      - key: MAILTRAP_PASS
+        sync: false

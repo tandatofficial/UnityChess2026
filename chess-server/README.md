@@ -1,4 +1,6 @@
-# Online chess server
+# Legacy Node.js / Socket.IO chess server
+
+This service is retained during the backend migration and remains deployed as a rollback option. The Unity client now defaults to the ASP.NET Core + SignalR service in `../chess-server-dotnet`; do not remove the Node service until the new deployment is validated.
 
 Node 22+, one server instance. Unity and server must be updated together: old clients using the shared `UNITY` token are rejected.
 

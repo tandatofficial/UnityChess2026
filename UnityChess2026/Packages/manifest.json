@@ -1,7 +1,6 @@
 {
   "dependencies": {
     "com.coplaydev.unity-mcp": "https://github.com/CoplayDev/unity-mcp.git?path=/MCPForUnity#main",
-    "com.itisnajim.socketiounity": "https://github.com/itisnajim/SocketIOUnity.git",
     "com.ivanmurzak.unity.mcp": "0.82.2",
     "com.ivanmurzak.unity.mcp.animation": "1.2.22",
     "com.ivanmurzak.unity.mcp.cinemachine": "1.0.7",
@@ -62,7 +61,8 @@
     "com.unity.modules.video": "1.0.0",
     "com.unity.modules.vr": "1.0.0",
     "com.unity.modules.wind": "1.0.0",
-    "com.unity.modules.xr": "1.0.0"
+    "com.unity.modules.xr": "1.0.0",
+    "com.unity.nuget.newtonsoft-json": "3.2.2"
   },
   "scopedRegistries": [
     {

@@ -17,6 +17,11 @@
 *.suo
 *.user
 *.userprefs
+!chess-server-dotnet/**/*.csproj
+/chess-server-dotnet/bin/
+/chess-server-dotnet/obj/
+/chess-server-dotnet/**/bin/
+/chess-server-dotnet/**/obj/
 
 # ParrelSync clones & local environment secrets
 /UnityChess2026_clone_*/
