@@ -49,3 +49,15 @@ Run `node --test test/register.test.js` for isolated registration tests without 
 `npm test` uses real localhost Socket.IO clients and temporary persistence files. It covers malformed packets, legal/illegal/stale moves, forged results, reconnect, rematch readiness, timeouts, persistence, and special chess moves.
 
 Before release, run two actual Unity clients with different accounts and verify: login/email, create/join public and private rooms, captures, castling, en passant, all promotions, checkmate/draw, network loss on one/both sides, reconnect before/after grace expiry, resignation, rematch, server restart, and leaving during reconnect. MSBuild compilation alone does not validate scene/prefab wiring or player builds.
+
+## Brevo HTTPS email (Render Free)
+
+Set these variables in Render Environment before deploying the API-enabled server:
+
+- `BREVO_API_KEY`: Brevo API key with permission to send transactional email (not an SMTP key).
+- `BREVO_SENDER_EMAIL`: the exact verified sender email from Brevo.
+- `BREVO_SENDER_NAME`: optional display name, defaults to `UnityChess2026`.
+
+When `BREVO_API_KEY` is set, verification uses HTTPS with a 15-second timeout. API errors never fall back to SMTP. Without this key, the existing SMTP configuration remains in use. Remove obsolete Gmail/Mailtrap credentials when using Brevo. Never commit credentials.
+
+Provider errors appear as `BREVO_HTTP_<status>`, `BREVO_TIMEOUT`, `BREVO_NETWORK`, or `BREVO_CONFIG` in `register.email_failed`. Check sender verification, transactional account activation, sending quota, API permissions and Brevo security/IP settings if delivery fails. HTTP acceptance does not guarantee inbox delivery; inspect Brevo transactional logs.

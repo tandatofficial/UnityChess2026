@@ -54,7 +54,8 @@ function registrationHarness(options = {}) {
     require: name => Object.hasOwn(stubs, name) ? stubs[name] : require(name),
     __dirname: path.dirname(serverPath), __filename: serverPath,
     process: { env: { SUPABASE_URL: 'https://database.invalid', SUPABASE_KEY: 'test',
-      EMAIL_USER: 'test@example.com', EMAIL_PASS: 'test' }, on() {} },
+      EMAIL_USER: 'test@example.com', EMAIL_PASS: 'test', ...(options.env || {}) }, on() {} },
+    fetch: options.fetch, AbortSignal,
     console: Object.fromEntries(['info', 'log', 'warn', 'error'].map(level => [level, (...args) => logs.push(args)])),
     Buffer
   });
@@ -164,5 +165,40 @@ for (const legacy of [true, false]) {
     const invalid = await h.login({ usernameOrEmail: user.username, password: 'wrong-password' });
     assert.equal(invalid.statusCode, 400);
     assert.equal(invalid.body.error, 'Invalid password.');
+  });
+}
+
+const brevoEnv = { BREVO_API_KEY: 'fake-brevo-key', BREVO_SENDER_EMAIL: 'sender@example.com' };
+test('Brevo HTTPS sends verification and skips SMTP without exposing key or code', async () => {
+  let payload;
+  const h = registrationHarness({ env: brevoEnv, fetch: async (url, init) => {
+    assert.equal(url, 'https://api.brevo.com/v3/smtp/email');
+    assert.equal(init.headers['api-key'], brevoEnv.BREVO_API_KEY);
+    assert.ok(init.signal);
+    payload = JSON.parse(init.body);
+    return { ok: true, status: 201 };
+  } });
+  assert.equal((await h.register()).statusCode, 200);
+  assert.equal(h.sent, 0);
+  assert.equal(payload.sender.email, brevoEnv.BREVO_SENDER_EMAIL);
+  assert.equal(payload.to[0].email, 'player_one@example.com');
+  assert.ok(payload.textContent.includes(h.queries[2].rows[0].verification_code));
+  const logs = JSON.stringify(h.logs);
+  assert.equal(logs.includes(brevoEnv.BREVO_API_KEY), false);
+  assert.equal(logs.includes(h.queries[2].rows[0].verification_code), false);
+});
+for (const failure of ['http', 'timeout', 'network', 'config']) {
+  test('Brevo ' + failure + ' failure returns 503 and rolls back without SMTP fallback', async () => {
+    const h = registrationHarness({
+      env: failure === 'config' ? { BREVO_API_KEY: 'fake-brevo-key' } : brevoEnv,
+      fetch: async () => {
+        if (failure === 'http') return { ok: false, status: 401 };
+        throw Object.assign(new Error('private provider details'), { name: failure === 'timeout' ? 'TimeoutError' : 'TypeError' });
+      }
+    });
+    assert.equal((await h.register()).statusCode, 503);
+    assert.equal(h.sent, 0);
+    assert.equal(h.queries.at(-1).delete, true);
+    assert.equal(JSON.stringify(h.logs).includes('private provider details'), false);
   });
 }

@@ -83,6 +83,34 @@ if (isGmailConfigured) {
 }
 
 async function sendVerificationEmail(email, code) {
+  // An API key explicitly selects HTTPS delivery; never fall back to SMTP on API errors.
+  if (process.env.BREVO_API_KEY) {
+    const senderEmail = process.env.BREVO_SENDER_EMAIL;
+    if (!senderEmail) throw Object.assign(new Error('Brevo sender is not configured'), { code: 'BREVO_CONFIG' });
+    let response;
+    try {
+      response = await fetch('https://api.brevo.com/v3/smtp/email', {
+        method: 'POST',
+        headers: { 'api-key': process.env.BREVO_API_KEY, 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({
+          sender: { name: process.env.BREVO_SENDER_NAME || 'UnityChess2026', email: senderEmail },
+          to: [{ email }],
+          subject: 'Chess Game - Verify your registration',
+          textContent: 'Your verification code is: ' + code + '. It will expire in 10 minutes.',
+          htmlContent: '<p>Your verification code is: <b>' + code + '</b>. It will expire in 10 minutes.</p>'
+        }),
+        signal: AbortSignal.timeout(15000)
+      });
+    } catch (error) {
+      throw Object.assign(new Error('Brevo request failed'), { code: error.name === 'TimeoutError' || error.name === 'AbortError' ? 'BREVO_TIMEOUT' : 'BREVO_NETWORK' });
+    }
+    // Do not log provider response bodies: they may contain recipient or message data.
+    const status = response.status;
+    await response.body?.cancel();
+    if (!response.ok) throw Object.assign(new Error('Brevo rejected email'), { code: 'BREVO_HTTP_' + status, responseCode: status });
+    return;
+  }
+
   
   const isMailtrapConfigured = process.env.MAILTRAP_USER && 
                                process.env.MAILTRAP_PASS && 
