@@ -59,8 +59,11 @@ const isGmailConfigured = (process.env.EMAIL_USER && process.env.EMAIL_PASS && !
 const emailUser = isGmailConfigured ? (process.env.EMAIL_USER || process.env.MAILTRAP_USER) : null;
 const emailPass = isGmailConfigured ? (process.env.EMAIL_PASS || process.env.MAILTRAP_PASS) : null;
 
+const smtpTimeouts = { connectionTimeout: 10000, greetingTimeout: 10000, socketTimeout: 15000 };
+
 if (isGmailConfigured) {
   transporter = nodemailer.createTransport({
+    ...smtpTimeouts,
     service: 'gmail',
     auth: {
       user: emailUser,
@@ -69,6 +72,7 @@ if (isGmailConfigured) {
   });
 } else {
   transporter = nodemailer.createTransport({
+    ...smtpTimeouts,
     host: "sandbox.smtp.mailtrap.io",
     port: 2525,
     auth: {
@@ -176,7 +180,17 @@ app.get('/health', (req, res) => {
  *       400:
  *         description: Bad request (missing fields, email/username already taken, etc.)
  */
-app.post('/api/auth/register', async (req, res) => {
+app.post('/api/auth/register', (req, res, next) => {
+  const requestId = crypto.randomUUID();
+  res.setHeader('X-Request-Id', requestId);
+  res.locals.registrationStage = 'validation';
+  console.info(JSON.stringify({ event: 'register.started', requestId }));
+  res.on('finish', () => console.info(JSON.stringify({
+    event: 'register.completed', requestId, status: res.statusCode,
+    stage: res.locals.registrationStage
+  })));
+  next();
+}, async (req, res) => {
   if (!supabase) {
     return res.status(503).json({ error: "Database service is not configured." });
   }
@@ -188,11 +202,14 @@ app.post('/api/auth/register', async (req, res) => {
   try {
     if (!/^[a-zA-Z0-9_]{3,32}$/.test(username) || !/^[^\s@,%()]+@[^\s@,%()]+\.[^\s@,%()]+$/.test(email) || password.length < 8)
       return res.status(400).json({ error: 'Use a 3-32 character username (letters, digits, underscore), valid email and password of at least 8 characters.' });
+    // ILIKE must treat underscores in account names/addresses literally.
+    const literalPattern = value => value.replace(/[%_\\]/g, c => '\\' + c);
+    res.locals.registrationStage = 'email_lookup';
     // Check duplicate email
     const { data: existingEmail, error: emailErr } = await supabase
       .from('game_users')
       .select('email')
-      .ilike('email', email)
+      .ilike('email', literalPattern(email))
       .maybeSingle();
 
     if (emailErr) {
@@ -203,11 +220,12 @@ app.post('/api/auth/register', async (req, res) => {
       return res.status(400).json({ error: "Email is already registered." });
     }
 
+    res.locals.registrationStage = 'username_lookup';
     // Check duplicate username
     const { data: existingUser, error: userErr } = await supabase
       .from('game_users')
       .select('username')
-      .ilike('username', username)
+      .ilike('username', literalPattern(username))
       .maybeSingle();
 
     if (userErr) {
@@ -218,6 +236,7 @@ app.post('/api/auth/register', async (req, res) => {
       return res.status(400).json({ error: "Username is already taken." });
     }
 
+    res.locals.registrationStage = 'create_user';
     // Create User
     const salt = generateSalt();
     const passwordHash = await hashPassword(password, salt);
@@ -238,15 +257,26 @@ app.post('/api/auth/register', async (req, res) => {
 
     if (insertErr) {
       console.error("❌ Supabase insert error:", insertErr);
+      if (insertErr.code === '23505') {
+        return res.status(400).json({ error: "Email or username is already registered." });
+      }
       return res.status(500).json({ error: "Failed to create user in database." });
     }
 
-    try { await sendVerificationEmail(email, code); }
+    res.locals.registrationStage = 'send_verification_email';
+    console.info(JSON.stringify({ event: 'register.email_started', requestId: res.getHeader('X-Request-Id') }));
+    try {
+      await sendVerificationEmail(email, code);
+      console.info(JSON.stringify({ event: 'register.email_completed', requestId: res.getHeader('X-Request-Id') }));
+    }
     catch (error) {
-      await supabase.from('game_users').delete().eq('email', email).eq('is_verified', false);
+      console.error(JSON.stringify({ event: 'register.email_failed', requestId: res.getHeader('X-Request-Id'), code: error.code || 'EMAIL_DELIVERY_FAILED', command: error.command, responseCode: error.responseCode }));
+      const { error: cleanupErr } = await supabase.from('game_users').delete().eq('email', email).eq('is_verified', false);
+      if (cleanupErr) console.error('Registration rollback failed:', cleanupErr);
       return res.status(503).json({ error: 'Verification email could not be sent. Please try again later.' });
     }
 
+    res.locals.registrationStage = 'complete';
     res.json({ message: "Registration successful. Please check your email for the verification code." });
   } catch (err) {
     console.error("❌ Register error:", err);
@@ -375,9 +405,12 @@ app.post('/api/auth/login', async (req, res) => {
       .ilike(usernameOrEmail.includes('@') ? 'email' : 'username', usernameOrEmail.replace(/[%_\\]/g, c => String.fromCharCode(92) + c))
       .maybeSingle();
 
-    if (queryErr || !user) {
-      console.error("❌ Supabase query error or not found:", queryErr);
-      return res.status(400).json({ error: "Account not found." });
+    if (queryErr) {
+      console.error('Login database query failed:', { code: queryErr.code });
+      return res.status(503).json({ error: 'Database temporarily unavailable. Please try again later.' });
+    }
+    if (!user) {
+      return res.status(400).json({ error: 'Account not found.' });
     }
 
     const computedHash = await hashPassword(password, user.salt, !user.password_hash.startsWith('pbkdf2-sha256:600000:'));

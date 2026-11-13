@@ -1,6 +1,6 @@
 # Legacy Node.js / Socket.IO chess server
 
-This service is retained during the backend migration and remains deployed as a rollback option. The Unity client now defaults to the ASP.NET Core + SignalR service in `../chess-server-dotnet`; do not remove the Node service until the new deployment is validated.
+This Node service is the current authentication backend at `https://unitychess2026-wjjq.onrender.com`. Unity's default URL points here. The ASP.NET Core service in `../chess-server-dotnet` remains a separate migration project.
 
 Node 22+, one server instance. Unity and server must be updated together: old clients using the shared `UNITY` token are rejected.
 
@@ -23,6 +23,16 @@ The root `render.yaml` uses Render's **free web service**, without a persistent 
 Set `SUPABASE_URL`, `SUPABASE_KEY`, and SMTP credentials in the hosting dashboard. Gmail uses `EMAIL_USER`/`EMAIL_PASS` (or the legacy Gmail values in `MAILTRAP_USER`/`MAILTRAP_PASS`). Mailtrap sandbox is for test inboxes, not real player email delivery. Registration fails if email cannot be delivered; verification codes are not exposed in logs or HTTP responses.
 
 Use HTTPS/WSS publicly. Change `ServerConfig.DEFAULT_SERVER_URL` to the actual deployment URL. Local testing can set Unity `PlayerPrefs` key `CustomServerUrl` to `http://127.0.0.1:11100`. Inspector localhost values are intentionally bypassed by the existing URL resolver.
+
+## Registration diagnostics
+
+Unity Console prints `[Auth] Register endpoint` before sending a registration request. Check this URL first: `CustomServerUrl` in PlayerPrefs and Inspector overrides take precedence over the default URL.
+
+In Render logs, filter for `register.started` and `register.completed`. Each request has an `X-Request-Id` response header, also printed by Unity on failure. Completion includes HTTP status and the last stage: `validation`, `email_lookup`, `username_lookup`, `create_user`, `send_verification_email`, or `complete`.
+
+Database failures still log the Supabase error. Check that `schema.sql` has been applied and the backend uses the service role key. SMTP failures additionally log `register.email_failed` with the SMTP error code; failed rollback is logged separately. Passwords and verification codes are not included in the new diagnostic events. These events require deployment of the updated Node server.
+
+Run `node --test test/register.test.js` for isolated registration tests without live Supabase or SMTP connections. A successful isolated test does not validate production database or email configuration.
 
 ## Match behavior
 
