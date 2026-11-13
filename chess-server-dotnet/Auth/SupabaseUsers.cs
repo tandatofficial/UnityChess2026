@@ -90,7 +90,7 @@ public sealed class SupabaseUsers(IHttpClientFactory clients, IConfiguration con
 
     private sealed class SupabaseUser
     {
-        [JsonPropertyName("id")] public string Id { get; set; } = "";
+        [JsonPropertyName("id")] public JsonElement Id { get; set; }
         [JsonPropertyName("username")] public string Username { get; set; } = "";
         [JsonPropertyName("email")] public string Email { get; set; } = "";
         [JsonPropertyName("password_hash")] public string PasswordHash { get; set; } = "";
@@ -99,7 +99,16 @@ public sealed class SupabaseUsers(IHttpClientFactory clients, IConfiguration con
         [JsonPropertyName("verification_code")] public string? VerificationCode { get; set; }
         [JsonPropertyName("verification_code_expiry")] public long? VerificationCodeExpiry { get; set; }
 
-        public UserRecord ToRecord() => new(Id, Username, Email, PasswordHash, Salt, IsVerified, VerificationCode, VerificationCodeExpiry);
+        public UserRecord ToRecord()
+        {
+            var id = Id.ValueKind switch
+            {
+                JsonValueKind.String => Id.GetString(),
+                JsonValueKind.Number => Id.GetRawText(),
+                _ => throw new JsonException("Supabase user id must be a string or number.")
+            };
+            return new UserRecord(id ?? "", Username, Email, PasswordHash, Salt, IsVerified, VerificationCode, VerificationCodeExpiry);
+        }
     }
 }
 

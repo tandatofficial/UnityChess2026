@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
+using System.Text;
 using ChessDotNet;
 using ChessServer.Auth;
 using ChessServer.Game;
@@ -24,6 +25,29 @@ public sealed class BackendTests
         Assert.Equal(HttpStatusCode.ServiceUnavailable,
             (await client.PostAsJsonAsync("/api/auth/login", new { usernameOrEmail = "alice", password = "password" })).StatusCode);
         Assert.Equal(HttpStatusCode.Unauthorized, (await client.GetAsync("/api/rooms")).StatusCode);
+    }
+
+    [Fact]
+    public async Task Supabase_int8_user_ids_are_read_as_strings()
+    {
+        const string responseJson = """
+            [{"id":123,"username":"alice","email":"alice@example.test","password_hash":"hash","salt":"salt","is_verified":true}]
+            """;
+        var handler = new StubHttpMessageHandler(_ => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(responseJson, Encoding.UTF8, "application/json")
+        });
+        var users = new SupabaseUsers(
+            new StubHttpClientFactory(handler),
+            new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+            {
+                ["SUPABASE_URL"] = "https://example.supabase.co",
+                ["SUPABASE_KEY"] = "test-key"
+            }).Build());
+
+        var user = await users.FindByLoginAsync("alice", CancellationToken.None);
+
+        Assert.Equal("123", user!.Id);
     }
 
     [Fact]
@@ -271,4 +295,15 @@ public sealed class BackendTests
 
     private sealed record RoomCreated(string RoomId);
     private sealed record RematchResponse(bool Agreed, bool Started);
+
+    private sealed class StubHttpClientFactory(HttpMessageHandler handler) : IHttpClientFactory
+    {
+        public HttpClient CreateClient(string name) => new(handler, disposeHandler: false);
+    }
+
+    private sealed class StubHttpMessageHandler(Func<HttpRequestMessage, HttpResponseMessage> respond) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken) =>
+            Task.FromResult(respond(request));
+    }
 }

@@ -131,10 +131,10 @@ public class SocketManager : MonoBehaviour
         public int revision;
         public float whiteTime, blackTime;
         public string[] legalMoves;
-        public PieceData[] captured;
+        public NetworkPieceData[] captured;
     }
 
-    [Serializable] private class PieceData { public int r, c, type, color; public bool hasMoved; }
+    [Serializable] private class NetworkPieceData { public int type, color; }
     [Serializable] private class ErrorData { public string error; }
     [Serializable] private class RoomCreatedData { public string roomId; }
     [Serializable] private class GameStartData { public string roomId, color, opponentName; }
@@ -200,7 +200,7 @@ public class SocketManager : MonoBehaviour
         stateDirty = false;
         var manager = GameManager.Instance;
         manager.ApplyOnlineState(latestState.boardState, latestState.status != "playing");
-        if (CaptureManager.Instance != null) CaptureManager.Instance.SyncOnlineCaptured(latestState.captured);
+        if (CaptureManager.Instance != null) CaptureManager.Instance.SyncOnlineCaptured(ConvertCapturedPieces(latestState.captured));
         if (ChessClock.Instance != null) ChessClock.Instance.SyncClockTimes(latestState.whiteTime, latestState.blackTime);
         if (latestState.status == "finished" && endedMatch != latestState.matchId)
         {
@@ -208,6 +208,23 @@ public class SocketManager : MonoBehaviour
             manager.HandleNetworkGameOver(latestState.winner, latestState.reason);
             OnGameOver?.Invoke(latestState.winner, latestState.reason);
         }
+    }
+
+    private static PieceData[] ConvertCapturedPieces(NetworkPieceData[] networkPieces)
+    {
+        if (networkPieces == null) return null;
+
+        var pieces = new PieceData[networkPieces.Length];
+        for (int i = 0; i < networkPieces.Length; i++)
+        {
+            pieces[i] = new PieceData
+            {
+                type = (PieceType)networkPieces[i].type,
+                color = (PieceColor)networkPieces[i].color
+            };
+        }
+
+        return pieces;
     }
 
     public void ConnectToServer(string name)
