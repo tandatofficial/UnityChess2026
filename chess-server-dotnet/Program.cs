@@ -47,8 +47,8 @@ app.UseSwaggerUI();
 
 app.MapGet("/", (MatchService matches) => Results.Ok(new { status = "online", activeRooms = matches.RoomCount }));
 app.MapGet("/health", () => Results.Ok(new { status = "healthy", uptime = (long)Stopwatch.GetElapsedTime(serverStarted).TotalSeconds, timestamp = DateTimeOffset.UtcNow }));
-app.MapPost("/api/auth/register", async (RegisterRequest request, SupabaseUsers users, EmailSender email, CancellationToken cancellationToken) =>
-    await AuthEndpoints.Register(request, users, email, cancellationToken));
+app.MapPost("/api/auth/register", async (RegisterRequest request, SupabaseUsers users, EmailSender email, ILoggerFactory loggerFactory, CancellationToken cancellationToken) =>
+    await AuthEndpoints.Register(request, users, email, loggerFactory, cancellationToken));
 app.MapPost("/api/auth/verify", async (VerifyRequest request, SupabaseUsers users, CancellationToken cancellationToken) =>
     await AuthEndpoints.Verify(request, users, cancellationToken));
 app.MapPost("/api/auth/login", async (LoginRequest request, SupabaseUsers users, SessionTokens tokens, CancellationToken cancellationToken) =>

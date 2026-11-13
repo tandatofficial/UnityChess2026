@@ -16,8 +16,9 @@ public static partial class AuthEndpoints
     [GeneratedRegex("^[^\\s@,%()]+@[^\\s@,%()]+\\.[^\\s@,%()]+$")]
     private static partial Regex EmailPattern();
 
-    public static async Task<IResult> Register(RegisterRequest request, SupabaseUsers users, EmailSender email, CancellationToken cancellationToken)
+    public static async Task<IResult> Register(RegisterRequest request, SupabaseUsers users, EmailSender email, ILoggerFactory loggerFactory, CancellationToken cancellationToken)
     {
+        var logger = loggerFactory.CreateLogger("ChessServer.Auth.Registration");
         if (!users.IsConfigured) return Error(503, "Database service is not configured.");
         if (string.IsNullOrWhiteSpace(request.Username) || string.IsNullOrWhiteSpace(request.Email) || request.Password is null)
             return Error(400, "Missing required fields (username, email, password).");
@@ -42,19 +43,29 @@ public static partial class AuthEndpoints
             {
                 await email.SendVerificationAsync(request.Email, user.VerificationCode!, cancellationToken);
             }
-            catch
+            catch (Exception exception)
             {
-                try { await users.DeleteUnverifiedByEmailAsync(request.Email, cancellationToken); } catch { }
+                logger.LogError(exception, "Verification email delivery failed during registration.");
+                try
+                {
+                    await users.DeleteUnverifiedByEmailAsync(request.Email, cancellationToken);
+                }
+                catch (Exception cleanupException)
+                {
+                    logger.LogError(cleanupException, "Failed to clean up an unverified registration after email delivery failed.");
+                }
                 return Error(503, "Verification email could not be sent. Please try again later.");
             }
             return Results.Ok(new { message = "Registration successful. Please check your email for the verification code." });
         }
-        catch (SupabaseException)
+        catch (SupabaseException exception)
         {
+            logger.LogError(exception, "Supabase request failed during registration with status {StatusCode}.", exception.StatusCode);
             return Error(500, "Database query failed.");
         }
-        catch
+        catch (Exception exception)
         {
+            logger.LogError(exception, "Registration failed due to an unexpected error.");
             return Error(500, "Internal server error.");
         }
     }
