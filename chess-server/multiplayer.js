@@ -122,7 +122,8 @@ function attachMultiplayer(io, options = {}) {
       const r = getRoom(); if (!r) throw new Error('No active match'); tick(r);
       if (data.matchId !== r.matchId || data.revision !== r.revision) throw new Error('Stale move; board resynchronized');
       if (r.status !== 'playing' || seat(r) !== color(r.game)) throw new Error('Not your turn');
-      r.game.move(parseMove(data.move)); r.revision++; r.lastTick = Date.now();
+      const accepted = r.game.move(parseMove(data.move)); r.revision++; r.lastTick = Date.now();
+      console.info(JSON.stringify({ event: 'move.accepted', roomId: r.roomId, matchId: r.matchId, revision: r.revision, san: accepted.san, from: accepted.from, to: accepted.to }));
       if (r.game.isCheckmate()) finish(r, opposite(color(r.game)), 'checkmate');
       else if (r.game.isDraw()) finish(r, 'draw', 'draw');
       else { sync(r); save(); }

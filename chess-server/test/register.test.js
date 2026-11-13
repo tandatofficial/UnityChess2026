@@ -47,6 +47,7 @@ function registrationHarness(options = {}) {
     'swagger-jsdoc': () => ({}),
     'swagger-ui-express': { serve() {}, setup: () => () => {} },
     './session': { issueSession() { return 'test-session'; } },
+    './admin': { attachAdmin() {} },
     './multiplayer': { attachMultiplayer: () => ({ rooms: new Map() }) }
   };
   const serverPath = path.join(__dirname, '..', 'server.js');

@@ -14,7 +14,7 @@ using UnityEngine.UI;
 
 public static class ServerConfig
 {
-    public const string DEFAULT_SERVER_URL = "https://unity-chess-server-dotnet.onrender.com";
+    public const string DEFAULT_SERVER_URL = "https://unitychess2026-wjjq.onrender.com";
 
     public static string GetBaseUrl(string inspectorOverride = null)
     {
@@ -87,6 +87,7 @@ public class SocketManager : MonoBehaviour
     private readonly Queue<string> pendingNetworkMoves = new Queue<string>();
     private ClientWebSocket socket;
     private CancellationTokenSource socketCancellation;
+    private readonly SemaphoreSlim socketSendLock = new SemaphoreSlim(1, 1);
     private string playerName;
     private bool isConnected;
     private bool applicationQuitting;
@@ -101,7 +102,8 @@ public class SocketManager : MonoBehaviour
 
     public string playerId { get; private set; }
     public bool CanSubmitMove => IsConnected && boardReadyForSync && !awaitingMove &&
-                                 latestState != null && latestState.status == "playing";
+                                 latestState != null && latestState.status == "playing" && !isSpectator &&
+                                 latestState.currentTurn == (assignedColor == PieceColor.White ? "white" : "black");
 
     public void MarkBoardReady()
     {
@@ -180,7 +182,7 @@ public class SocketManager : MonoBehaviour
         {
             string move = pendingNetworkMoves.Dequeue();
             try { GameManager.Instance.ApplyMoveFromNetwork(move); }
-            catch (Exception ex) { Debug.LogError($"[SignalR] Could not apply remote move: {ex}"); }
+            catch (Exception ex) { Debug.LogError($"[Socket.IO] Could not apply remote move: {ex}"); }
         }
     }
 
@@ -256,77 +258,85 @@ public class SocketManager : MonoBehaviour
         var builder = new UriBuilder(baseUri)
         {
             Scheme = baseUri.Scheme == "https" ? "wss" : "ws",
-            Path = baseUri.AbsolutePath.TrimEnd('/') + "/hubs/game",
-            Query = "access_token=" + Uri.EscapeDataString(OnlineSession.Token)
+            Path = baseUri.AbsolutePath.TrimEnd('/') + "/socket.io/",
+            Query = "EIO=4&transport=websocket"
         };
-        Task connect = socket.ConnectAsync(builder.Uri, socketCancellation.Token);
+        Debug.Log($"[Socket.IO] Connecting to {serverUrl}/socket.io/");
+        socketCancellation.CancelAfter(TimeSpan.FromSeconds(30));
+        var connectingSocket = socket;
+        var connectingCancellation = socketCancellation;
+        Task connect = connectingSocket.ConnectAsync(builder.Uri, connectingCancellation.Token);
         while (!connect.IsCompleted) yield return null;
-        if (connect.IsFaulted)
+        if (socket != connectingSocket) yield break;
+        if (connect.IsFaulted || connect.IsCanceled)
         {
-            HandleConnectionError(connect.Exception?.GetBaseException().Message ?? "Could not connect to server.");
+            HandleConnectionError(connect.Exception?.GetBaseException().Message ?? "Connection timed out.");
             yield break;
         }
 
-        string handshake = JsonConvert.SerializeObject(new { protocol = "json", version = 1 }) + "\u001e";
-        Task send = socket.SendAsync(new ArraySegment<byte>(Encoding.UTF8.GetBytes(handshake)),
-            WebSocketMessageType.Text, true, socketCancellation.Token);
-        while (!send.IsCompleted) yield return null;
-        if (send.IsFaulted)
-        {
-            HandleConnectionError(send.Exception?.GetBaseException().Message ?? "SignalR handshake failed.");
-            yield break;
-        }
-
+        socketCancellation.CancelAfter(Timeout.Infinite);
         _ = ReceiveLoopAsync(socket, socketCancellation.Token);
     }
 
     private async Task ReceiveLoopAsync(ClientWebSocket connection, CancellationToken cancellationToken)
     {
         var buffer = new byte[8192];
-        var receiveBuffer = new StringBuilder();
-        var handshakeReceived = false;
         try
         {
             while (connection.State == WebSocketState.Open && !cancellationToken.IsCancellationRequested)
             {
-                var result = await connection.ReceiveAsync(new ArraySegment<byte>(buffer), cancellationToken);
-                if (result.MessageType == WebSocketMessageType.Close) break;
-                receiveBuffer.Append(Encoding.UTF8.GetString(buffer, 0, result.Count));
-                var text = receiveBuffer.ToString();
-                var start = 0;
-                for (int i = 0; i < text.Length; i++)
+                using (var message = new System.IO.MemoryStream())
                 {
-                    if (text[i] != '\u001e') continue;
-                    string record = text.Substring(start, i - start);
-                    start = i + 1;
-                    if (!handshakeReceived)
+                    WebSocketReceiveResult result;
+                    do
                     {
-                        handshakeReceived = true;
-                        if (!string.IsNullOrWhiteSpace(record) && record != "{}")
-                            throw new InvalidOperationException(record);
-                        EnqueueMainThread(() =>
-                        {
+                        result = await connection.ReceiveAsync(new ArraySegment<byte>(buffer), cancellationToken);
+                        if (result.MessageType == WebSocketMessageType.Close) return;
+                        message.Write(buffer, 0, result.Count);
+                        if (message.Length > 1024 * 1024) throw new InvalidOperationException("Socket message too large.");
+                    } while (!result.EndOfMessage);
+                    if (result.MessageType != WebSocketMessageType.Text) continue;
+                    string packet = Encoding.UTF8.GetString(message.ToArray());
+                    if (packet.StartsWith("0", StringComparison.Ordinal))
+                        await SendSocketPacketAsync(connection, "40" + JsonConvert.SerializeObject(new { token = OnlineSession.Token }), cancellationToken);
+                    else if (packet.StartsWith("2", StringComparison.Ordinal))
+                        await SendSocketPacketAsync(connection, "3" + packet.Substring(1), cancellationToken);
+                    else if (packet.StartsWith("40", StringComparison.Ordinal))
+                    {
+                        JObject.Parse(packet.Substring(2));
+                        EnqueueMainThread(() => {
+                            if (socket != connection) return;
+                            // Keep the existing stable player ID across reconnects.
                             isConnected = true;
                             reconnectScheduled = false;
+                            Debug.Log("[Socket.IO] Connected and authenticated");
                             OnConnected?.Invoke();
                         });
                     }
-                    else if (!string.IsNullOrWhiteSpace(record))
-                        await ProcessHubRecordAsync(connection, record, cancellationToken);
+                    else if (packet.StartsWith("42", StringComparison.Ordinal))
+                    {
+                        var args = JArray.Parse(packet.Substring(2));
+                        string target = args[0].Value<string>();
+                        string payload = args.Count < 2 ? "{}" : args[1].Type == JTokenType.String ? args[1].Value<string>() : args[1].ToString(Formatting.None);
+                        EnqueueMainThread(() => { if (socket == connection) HandleHubEvent(target, payload); });
+                    }
+                    else if (packet.StartsWith("44", StringComparison.Ordinal))
+                        throw new InvalidOperationException(JObject.Parse(packet.Substring(2)).Value<string>("message") ?? "Socket authentication failed.");
+                    else if (packet == "41" || packet == "1")
+                        throw new InvalidOperationException("Server disconnected the socket.");
                 }
-                receiveBuffer.Clear();
-                if (start < text.Length) receiveBuffer.Append(text.Substring(start));
             }
         }
         catch (OperationCanceledException) { }
         catch (Exception ex)
         {
-            EnqueueMainThread(() => HandleConnectionError(ex.GetBaseException().Message));
+            EnqueueMainThread(() => { if (socket == connection) HandleConnectionError(ex.GetBaseException().Message); });
         }
         finally
         {
             EnqueueMainThread(() =>
             {
+                if (socket != connection) return;
                 if (isConnected)
                 {
                     isConnected = false;
@@ -363,24 +373,6 @@ public class SocketManager : MonoBehaviour
             ResetOnlineState();
             OnReconnectFailed?.Invoke("Connection lost. Please reconnect from the lobby.");
         }
-    }
-
-    private async Task ProcessHubRecordAsync(ClientWebSocket connection, string record, CancellationToken cancellationToken)
-    {
-        var message = JObject.Parse(record);
-        int type = message.Value<int?>("type") ?? 0;
-        if (type == 6)
-        {
-            await SendHubMessageAsync(connection, new { type = 6 }, cancellationToken);
-            return;
-        }
-        if (type == 7) throw new InvalidOperationException(message.Value<string>("error") ?? "SignalR connection closed.");
-        if (type != 1) return;
-        string target = message.Value<string>("target");
-        var args = message["arguments"] as JArray;
-        if (string.IsNullOrEmpty(target) || args == null || args.Count == 0) return;
-        string payload = args[0].ToString(Formatting.None);
-        EnqueueMainThread(() => HandleHubEvent(target, payload));
     }
 
     private void HandleHubEvent(string target, string payload)
@@ -477,15 +469,29 @@ public class SocketManager : MonoBehaviour
         awaitingMove = false;
     }
 
-    private async Task SendHubMessageAsync(ClientWebSocket connection, object message, CancellationToken token)
+    private async Task SendSocketPacketAsync(ClientWebSocket connection, string packet, CancellationToken token)
     {
-        if (connection == null || connection.State != WebSocketState.Open) return;
-        string payload = JsonConvert.SerializeObject(message) + "\u001e";
-        await connection.SendAsync(new ArraySegment<byte>(Encoding.UTF8.GetBytes(payload)), WebSocketMessageType.Text, true, token);
+        await socketSendLock.WaitAsync(token);
+        try
+        {
+            if (connection.State != WebSocketState.Open) throw new InvalidOperationException("Socket is closed.");
+            await connection.SendAsync(new ArraySegment<byte>(Encoding.UTF8.GetBytes(packet)), WebSocketMessageType.Text, true, token);
+        }
+        finally { socketSendLock.Release(); }
+    }
+
+    private async Task EmitSocketEventAsync(string eventName, object data)
+    {
+        var connection = socket;
+        var token = socketCancellation?.Token ?? CancellationToken.None;
+        try { await SendSocketPacketAsync(connection, "42" + JsonConvert.SerializeObject(new object[] { eventName, data }), token); }
+        catch (OperationCanceledException) { }
+        catch (Exception ex) { EnqueueMainThread(() => { if (socket == connection) HandleConnectionError(ex.Message); }); }
     }
 
     private void HandleConnectionError(string error)
     {
+        Debug.LogWarning($"[Socket.IO] {error}");
         isConnected = false;
         if (GameManager.Instance != null && isOnlineMode) GameManager.Instance.isPausedForReconnect = true;
         OnJoinError?.Invoke(error);
@@ -513,97 +519,34 @@ public class SocketManager : MonoBehaviour
         catch { return payload; }
     }
 
-    public void GetAvailableRooms()
-    {
-        if (IsConnected)
-            StartCoroutine(SendRest("GET", "/api/rooms", null, response => OnAvailableRoomsListReceived?.Invoke(response)));
-    }
-
+    public void GetAvailableRooms() { if (IsConnected) _ = EmitSocketEventAsync("getAvailableRooms", new { }); }
     public void CreateRoom(bool isPrivate = false)
     {
         if (!IsConnected) { OnJoinError?.Invoke("Not connected to server."); return; }
-        StartCoroutine(SendRest("POST", "/api/rooms", JsonConvert.SerializeObject(new { isPrivate }), null));
+        _ = EmitSocketEventAsync("createRoom", new { isPrivate });
     }
-
     public void JoinRoom(string roomId)
     {
         if (!IsConnected) { OnJoinError?.Invoke("Not connected to server."); return; }
-        StartCoroutine(SendRest("POST", "/api/rooms/" + Uri.EscapeDataString(roomId.Trim().ToUpperInvariant()) + "/join", "{}", null));
+        _ = EmitSocketEventAsync("joinRoom", new { roomId = roomId.Trim().ToUpperInvariant() });
     }
-
-    public void RequestRematch()
-    {
-        if (IsConnected && !string.IsNullOrEmpty(currentRoomId))
-            StartCoroutine(SendRest("POST", RoomPath("rematch"), "{}", null));
-    }
-
-    public void SendPlayerReadyForRematch()
-    {
-        if (IsConnected && !string.IsNullOrEmpty(currentRoomId))
-            StartCoroutine(SendRest("POST", RoomPath("ready"), "{}", null));
-    }
-
+    public void RequestRematch() { if (IsConnected) _ = EmitSocketEventAsync("requestRematch", new { }); }
+    public void SendPlayerReadyForRematch() { if (IsConnected) _ = EmitSocketEventAsync("playerReadyForRematch", new { }); }
     public void SendMove(string move)
     {
         if (!isOnlineMode || !IsConnected || !CanSubmitMove) return;
-        var request = new NetworkMoveData
-        {
-            move = move,
-            matchId = latestState.matchId,
-            revision = latestState.revision
-        };
         awaitingMove = true;
         moveSentAt = Time.realtimeSinceStartup;
-        StartCoroutine(SendRest("POST", RoomPath("moves"), JsonConvert.SerializeObject(request),
-            response => ApplyStatePayload(response)));
+        _ = EmitSocketEventAsync("move", new NetworkMoveData { move = move, matchId = latestState.matchId, revision = latestState.revision });
     }
-
     public void SendGameOver(string winner, string reason) { }
-
-    public void Resign()
-    {
-        if (isOnlineMode && IsConnected && !string.IsNullOrEmpty(currentRoomId))
-            StartCoroutine(SendRest("POST", RoomPath("resign"), "{}", response => ApplyStatePayload(response)));
-    }
-
+    public void Resign() { if (isOnlineMode && IsConnected) _ = EmitSocketEventAsync("resign", new { }); }
     public void LeaveRoom()
     {
-        if (IsConnected && !string.IsNullOrEmpty(currentRoomId))
-            StartCoroutine(SendRest("POST", RoomPath("leave"), "{}", null));
+        if (IsConnected && !string.IsNullOrEmpty(currentRoomId)) _ = EmitSocketEventAsync("leaveRoom", new { });
         ResetOnlineState();
     }
-
-    private void RequestState()
-    {
-        if (IsConnected && !string.IsNullOrEmpty(currentRoomId))
-            StartCoroutine(SendRest("GET", "/api/rooms/" + Uri.EscapeDataString(currentRoomId),
-                null, response => ApplyStatePayload(response)));
-    }
-
-    private string RoomPath(string action) =>
-        "/api/rooms/" + Uri.EscapeDataString(currentRoomId) + "/" + action;
-
-    private System.Collections.IEnumerator SendRest(string method, string path, string body, Action<string> success)
-    {
-        var request = new UnityWebRequest(ServerConfig.GetBaseUrl(serverUrl) + path, method)
-        {
-            downloadHandler = new DownloadHandlerBuffer()
-        };
-        if (body != null) request.uploadHandler = new UploadHandlerRaw(Encoding.UTF8.GetBytes(body));
-        request.SetRequestHeader("Authorization", "Bearer " + OnlineSession.Token);
-        if (body != null) request.SetRequestHeader("Content-Type", "application/json");
-        yield return request.SendWebRequest();
-        if (request.result == UnityWebRequest.Result.Success)
-            success?.Invoke(request.downloadHandler.text);
-        else
-        {
-            string message = ReadError(request.downloadHandler?.text ?? request.error);
-            awaitingMove = false;
-            OnJoinError?.Invoke(message);
-            if (method == "POST" && path.EndsWith("/moves", StringComparison.Ordinal)) RequestState();
-        }
-        request.Dispose();
-    }
+    private void RequestState() { if (IsConnected) _ = EmitSocketEventAsync("requestState", new { }); }
 
     public void Disconnect()
     {

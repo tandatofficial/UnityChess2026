@@ -480,6 +480,7 @@ const io = new Server(server, {
 // ----------------------------------------------------
 
 const multiplayer = require('./multiplayer').attachMultiplayer(io);
+require('./admin').attachAdmin(app, multiplayer);
 app.get('/', (req, res) => res.json({ status: 'online', activeRooms: multiplayer.rooms.size }));
 function shutdown() { multiplayer.close(); io.close(); server.close(() => process.exit(0)); }
 process.on('SIGTERM', shutdown);

@@ -61,3 +61,9 @@ Set these variables in Render Environment before deploying the API-enabled serve
 When `BREVO_API_KEY` is set, verification uses HTTPS with a 15-second timeout. API errors never fall back to SMTP. Without this key, the existing SMTP configuration remains in use. Remove obsolete Gmail/Mailtrap credentials when using Brevo. Never commit credentials.
 
 Provider errors appear as `BREVO_HTTP_<status>`, `BREVO_TIMEOUT`, `BREVO_NETWORK`, or `BREVO_CONFIG` in `register.email_failed`. Check sender verification, transactional account activation, sending quota, API permissions and Brevo security/IP settings if delivery fails. HTTP acceptance does not guarantee inbox delivery; inspect Brevo transactional logs.
+
+## Read-only admin observer
+
+Set a private `ADMIN_VIEW_KEY` of at least 24 characters in Render Environment, then deploy and open `/admin`. Enter the key in the page (never in a URL). The key stays in page memory and is sent as a Bearer header. The page polls `/api/admin/rooms` every second and shows only server-owned FEN, move history, players, turn, clocks and revision. It cannot submit moves or change matches. Treat the key as a secret; access is disabled when it is missing/too short. Finished rooms remain visible only until their normal expiry; this is not a durable match archive.
+
+For a demo, sign in with two distinct accounts, create/join a room, open the observer, and play e2-e4: the admin history should show e4 and revision 1. Invalid or stale moves must not advance revision. `move.accepted` logs correlate roomId, matchId, revision and SAN without account credentials.

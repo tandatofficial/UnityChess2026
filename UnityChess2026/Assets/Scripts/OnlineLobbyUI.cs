@@ -320,13 +320,24 @@ public class OnlineLobbyUI : MonoBehaviour
 
     private void HandleRoomCreated(string roomId)
     {
+        if (string.IsNullOrWhiteSpace(roomId))
+        {
+            HandleJoinError("Server did not return a room code. Please try again.");
+            return;
+        }
+
         Debug.Log($"[OnlineLobbyUI] Room created: {roomId}");
         SetPanel(waitingPanel);
 
-        // Chỉ hiện mã phòng với Private room
-        bool showCode = _currentRoomIsPrivate;
-        if (roomCodeSection != null) roomCodeSection.SetActive(showCode);
-        if (roomCodeDisplay != null) roomCodeDisplay.text = showCode ? roomId : "";
+        // Both public and private rooms can be shared using their room code.
+        if (roomCodeSection != null) roomCodeSection.SetActive(true);
+        if (roomCodeDisplay != null)
+        {
+            roomCodeDisplay.gameObject.SetActive(true);
+            roomCodeDisplay.text = roomId;
+        }
+        if (statusText != null)
+            statusText.text = $"Room {roomId} created. Waiting for opponent...";
     }
 
     private void HandleGameStarted(string opponentName, string color)
@@ -540,6 +551,8 @@ public class OnlineLobbyUI : MonoBehaviour
         }
         if (statusText != null) statusText.text = isPrivate ? "Creating private room..." : "Creating public room...";
         _currentRoomIsPrivate = isPrivate;
+        if (roomCodeDisplay != null) roomCodeDisplay.text = "";
+        if (roomCodeSection != null) roomCodeSection.SetActive(false);
         SocketManager.Instance.CreateRoom(isPrivate);
     }
 

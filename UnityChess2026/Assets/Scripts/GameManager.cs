@@ -1054,18 +1054,11 @@ public class GameManager : MonoBehaviour
 
     public void SendNetworkMove(string moveString)
     {
-        string stateJson = GetBoardStateJson();
-        float wTime = ChessClock.Instance != null ? ChessClock.Instance.whiteTimeRemaining : -1f;
-        float bTime = ChessClock.Instance != null ? ChessClock.Instance.blackTimeRemaining : -1f;
-        string networkData = JsonUtility.ToJson(new NetworkMoveData
-        {
-            move = moveString,
-            boardState = stateJson,
-            whiteTime = wTime,
-            blackTime = bTime
-        });
-        SocketManager.Instance.SendMove(networkData);
+        // Only send intent. Board state, legality and clocks belong to the server.
+        if (currentGameMode != GameMode.Online || SocketManager.Instance == null) return;
+        SocketManager.Instance.SendMove(moveString);
     }
+
 }
 
 [System.Serializable]
